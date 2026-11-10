@@ -211,6 +211,124 @@ struct FolderIconGlass: Equatable {
     }
 }
 
+// MARK: - Selection highlight (the fourth glass-driven surface)
+
+/// The highlight shown when an app is hovered, keyboard-selected or hovered
+/// as a merge target. Before v1.6 the main grid, search results and open
+/// folder each hard-coded their own white rounded rectangle (radius 0.30 /
+/// 0.25 / 0.24 × icon size, fill 0.13 / 0.10 / 0.10), so the global glass
+/// sliders moved three surfaces but not the one the user points at most.
+///
+/// This is a PURE VALUE, not a `glassEffect`: the main grid lives inside
+/// `PageSlot.drawingGroup()`, where real glass is both invisible and measured
+/// at 9.75% jank / 17.98 ms p95. The five global glass values drive the
+/// geometry and opacity instead, which is what "one parameter set, four
+/// surfaces" can safely mean on the rasterised path.
+struct SelectionHighlightStyle: Equatable {
+    let enabled: Bool
+    let isClear: Bool
+    let iconSize: CGFloat
+    let cornerRadius: CGFloat
+    let hoverFill: Double
+    let selectedFill: Double
+    let strokeOpacity: Double
+    let glowBlur: CGFloat
+    let hoverScale: CGFloat
+    let labelFill: Double
+
+    init(settings: Settings, iconSize: CGFloat) {
+        let useGlass = settings.glassEnabled && !ProbeConfig.selectionGlassDisabled
+        enabled = useGlass
+        isClear = useGlass && settings.glassStyle == .clear
+        self.iconSize = iconSize
+
+        // The 6–36 pt panel radius describes a ~600 pt surface. Scale the
+        // main grid's original 0.27 × iconSize onto that range and clamp so
+        // a tile never becomes a circle or a square. Default 24 pt lands
+        // exactly back on 0.27.
+        let factor = CGFloat(settings.glassRadius / Settings.defaultGlassRadius)
+        cornerRadius = min(max(iconSize * 0.27 * factor, iconSize * 0.10),
+                           iconSize * 0.42)
+
+        // Tint 0.38 reproduces the three original values: 0.13 hover fill,
+        // 0.82 selection stroke, 0.16 selected label background.
+        let dim = isClear ? 0.62 : 1.0
+        hoverFill = min(max((0.055 + settings.glassTint * 0.20) * dim, 0.05), 0.20)
+        selectedFill = min(max((0.05 + settings.glassTint * 0.18) * dim, 0.04), 0.18)
+        strokeOpacity = min(max((0.62 + settings.glassTint * 0.52) * dim, 0.60), 0.95)
+        labelFill = min(max((0.08 + settings.glassTint * 0.21) * dim, 0.08), 0.22)
+        glowBlur = useGlass ? min(max(iconSize * 0.20 * factor, 6), 26) : 0
+        hoverScale = useGlass ? 1.035 : 1.0
+    }
+
+    /// One box for all three surfaces. The old code used +20 / +14 / +16;
+    /// +18 is the main grid's value and sits between the other two.
+    var boxSize: CGFloat { iconSize + 18 }
+
+    func fillOpacity(for state: SelectionHighlightState) -> Double {
+        switch state {
+        case .none: return 0
+        case .hover, .mergeTarget: return hoverFill
+        case .selected: return selectedFill
+        }
+    }
+
+    var readout: String {
+        "半径 \(Int(cornerRadius.rounded()))pt · 悬停 \(Int((hoverFill * 100).rounded()))%"
+            + " · 描边 \(Int((strokeOpacity * 100).rounded()))%"
+            + " · 光晕 \(Int(glowBlur.rounded()))pt"
+    }
+}
+
+enum SelectionHighlightState: Hashable, Equatable {
+    case none
+    case hover
+    case selected
+    case mergeTarget
+}
+
+/// One renderer for every app-selection cue. `accent` is optional so search
+/// results can keep their signal-orange focus ring while the main grid and
+/// the folder panel use white — shape, radius and opacity stay identical.
+struct SelectionHighlightSurface: View {
+    let style: SelectionHighlightStyle
+    let state: SelectionHighlightState
+    var accent: Color? = nil
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
+    }
+
+    var body: some View {
+        Group {
+            if state != .none {
+                ZStack {
+                    if state == .hover && style.glowBlur > 0 {
+                        shape.fill(.white.opacity(style.hoverFill))
+                            .frame(width: style.boxSize, height: style.boxSize)
+                            .blur(radius: style.glowBlur)
+                    }
+                    shape.fill(.white.opacity(style.fillOpacity(for: state)))
+                        .frame(width: style.boxSize, height: style.boxSize)
+
+                    if state != .hover {
+                        let color: Color = state == .mergeTarget
+                            ? .white.opacity(0.9)
+                            : (accent ?? .white.opacity(style.strokeOpacity))
+                        shape.stroke(color,
+                                     lineWidth: state == .mergeTarget ? 2 : 2.5)
+                            .frame(width: style.boxSize, height: style.boxSize)
+                            .shadow(color: .black.opacity(0.30), radius: 6, y: 2)
+                    }
+                }
+                .frame(width: style.boxSize, height: style.boxSize)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 /// Glass backing for the collapsed folder icon. Non-interactive glass is
 /// deliberate: an `.interactive()` layer per folder tile would put a
 /// hover-reactive backdrop into every rasterised page.
