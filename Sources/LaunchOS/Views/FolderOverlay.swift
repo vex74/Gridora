@@ -40,9 +40,10 @@ struct FolderOverlay: View {
         min(max(model.metrics.iconSize * 0.92, 92), 128)
     }
 
-    private var panelWidth: CGFloat {
-        min(760, max(560, model.areaSize.width * 0.42))
-    }
+    /// Single source: the model computes the panel width because the wheel
+    /// uses it as the page extent for `PagingRules.flickThreshold`. Drawing
+    /// and input must never disagree about how wide a folder page is.
+    private var panelWidth: CGFloat { model.folderPanelWidth }
 
     /// The one geometry object shared by drawing, click hit-testing and drop
     /// targets. Nothing in this file re-derives cell arithmetic.
@@ -96,7 +97,7 @@ struct FolderOverlay: View {
                 // dragging out of the panel still thins it to 10% so the grid
                 // underneath stays visible as a drop target.
                 Color.black.opacity(folderDragInfo.outsidePanel
-                                    ? 0.10 : model.settings.folderGlassScrim)
+                                    ? 0.10 : model.settings.glassScrim)
                     .ignoresSafeArea()
                     .onTapGesture { close() }
 
@@ -110,7 +111,7 @@ struct FolderOverlay: View {
                             .foregroundStyle(.white.opacity(0.4))
                             .frame(width: panelWidth, height: grid.gridHeight)
                     } else {
-                        folderGrid
+                        pageStrip
                         if chunks.count > 1 { pageBar }
                     }
                 }
@@ -154,12 +155,45 @@ struct FolderOverlay: View {
 
     // MARK: - Grid
 
-    private var folderGrid: some View {
+    /// The 3 × 3 pages side by side, slid horizontally. macOS 15 turns a
+    /// folder page with the same movement as the main Launchpad pages, so the
+    /// panel no longer swaps its contents in place: the strip translates by
+    /// exactly one page width and `Motion.page` is the pager's critically
+    /// damped curve. Both pagers now share `PagingRules` for input and
+    /// `Motion.page` for the animation, which is what "one paging model"
+    /// means here — the folder just clips instead of rubber-banding.
+    private var pageStrip: some View {
         let g = grid
-        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(g.cellWidth), spacing: g.columnSpacing),
+        return HStack(spacing: 0) {
+            ForEach(chunks.indices, id: \.self) { page in
+                pageColumn(page, grid: g)
+            }
+        }
+        .offset(x: -CGFloat(pageIndex) * g.gridWidth)
+        .frame(width: g.gridWidth, height: g.gridHeight, alignment: .topLeading)
+        .clipped()
+        .animation(Motion.page, value: pageIndex)
+        .background(
+            GeometryReader { gridGeo in
+                Color.clear.onAppear { gridFrame = gridGeo.frame(in: .global) }
+            }
+        )
+    }
+
+    /// The apps shown on a given page: the live reorder preview applies only
+    /// to the page the user is on, every other page keeps its committed order.
+    private func pageItems(_ page: Int) -> [AppInfo] {
+        guard chunks.indices.contains(page) else { return [] }
+        return page == pageIndex ? displayed : chunks[page]
+    }
+
+    private func pageColumn(_ page: Int, grid g: FolderGridMetrics) -> some View {
+        let items = pageItems(page)
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(g.cellWidth),
+                                                           spacing: g.columnSpacing),
                                         count: FolderGridMetrics.columns),
                          spacing: g.rowSpacing) {
-            ForEach(Array(displayed.enumerated()), id: \.element.bundleID) { slot, app in
+            ForEach(Array(items.enumerated()), id: \.element.bundleID) { slot, app in
                 FolderAppCell(app: app,
                               folderID: folderID,
                               grid: g,
@@ -185,61 +219,25 @@ struct FolderOverlay: View {
                             }
                     )
             }
-            if displayed.count < FolderGridMetrics.perPage {
-                ForEach(0..<(FolderGridMetrics.perPage - displayed.count), id: \.self) { _ in
+            if items.count < FolderGridMetrics.perPage {
+                ForEach(0..<(FolderGridMetrics.perPage - items.count), id: \.self) { _ in
                     Color.clear.frame(height: g.cellHeight)
                 }
             }
         }
         .padding(.horizontal, g.horizontalPadding)
         .padding(.vertical, g.verticalPadding)
-        .frame(height: g.gridHeight)
-        .animation(Motion.quick, value: displayed.map(\.bundleID))
-        .background(
-            GeometryReader { gridGeo in
-                Color.clear.onAppear { gridFrame = gridGeo.frame(in: .global) }
-            }
-        )
+        .frame(width: g.gridWidth, height: g.gridHeight, alignment: .top)
+        .animation(Motion.quick, value: items.map(\.bundleID))
     }
 
+    /// Dots only — no chevrons. macOS 15 has never put arrow buttons on a
+    /// folder; the wheel, the arrow keys and the dots are the paging controls.
+    /// Same `PagingDots` component as the main grid, without its capsule
+    /// chrome (the panel already is a surface).
     private var pageBar: some View {
-        HStack(spacing: 16) {
-            Button {
-                withAnimation(Motion.quick) { model.turnFolderPage(-1) }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(pageIndex > 0 ? 0.8 : 0.22))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(pageIndex == 0)
-
-            HStack(spacing: 7) {
-                ForEach(chunks.indices, id: \.self) { index in
-                    Circle()
-                        .fill(.white.opacity(index == pageIndex ? 0.9 : 0.28))
-                        .frame(width: 6, height: 6)
-                        .frame(width: 18, height: 28)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation(Motion.quick) { model.setFolderPage(index) }
-                        }
-                }
-            }
-
-            Button {
-                withAnimation(Motion.quick) { model.turnFolderPage(1) }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(pageIndex < chunks.count - 1 ? 0.8 : 0.22))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(pageIndex >= chunks.count - 1)
+        PagingDots(count: chunks.count, index: pageIndex, chrome: false) { page in
+            model.setFolderPage(page)
         }
         .frame(height: 46)
         .padding(.bottom, 6)
