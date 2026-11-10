@@ -318,3 +318,78 @@ struct FolderGlassPreviewStage: View {
             }
     }
 }
+
+// MARK: - Fourth glass-driven surface: the selection highlight
+
+/// Settings ▸ Appearance inline preview for the hover / keyboard-selection
+/// highlight. The main grid, search results and the open folder all render
+/// `SelectionHighlightSurface` with a `SelectionHighlightStyle` built from
+/// the same five `glass*` keys; this stage uses the identical value so one
+/// slider visibly moves all four surfaces without closing settings.
+struct SelectionHighlightPreviewStage: View {
+    @EnvironmentObject var model: LauncherModel
+
+    private var style: SelectionHighlightStyle {
+        SelectionHighlightStyle(settings: model.settings, iconSize: 46)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("选中 / 悬停高亮")
+                    .font(.system(size: DesignTokens.caption, weight: .medium))
+                    .foregroundStyle(DesignTokens.settingsMuted)
+                Spacer()
+                Text(style.enabled ? "跟随玻璃" : "原样式")
+                    .font(.system(size: DesignTokens.micro, weight: .medium))
+                    .foregroundStyle(DesignTokens.settingsAccent)
+            }
+
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                ForEach([SelectionHighlightState.none,
+                         SelectionHighlightState.hover,
+                         SelectionHighlightState.selected], id: \.self) { state in
+                    tile(state: state)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.cardRadius,
+                                 style: .continuous)
+                    .fill(Color.black.opacity(0.86))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.cardRadius,
+                                 style: .continuous)
+                    .stroke(DesignTokens.settingsHairline, lineWidth: DesignTokens.hairline)
+            )
+            .allowsHitTesting(false)
+
+            Text(style.readout)
+                .font(.system(size: DesignTokens.caption).monospacedDigit())
+                .foregroundStyle(DesignTokens.settingsMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("选中高亮实时预览：\(style.readout)")
+    }
+
+    private func tile(state: SelectionHighlightState) -> some View {
+        ZStack {
+            SelectionHighlightSurface(style: style, state: state)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(LinearGradient(colors: [Color.white.opacity(0.34),
+                                              Color.white.opacity(0.14)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: 46, height: 46)
+                .overlay(
+                    Image(systemName: "app.fill")
+                        .font(.system(size: 17))
+                        .foregroundStyle(.white.opacity(0.75))
+                )
+        }
+        .frame(width: style.boxSize, height: style.boxSize)
+    }
+}
