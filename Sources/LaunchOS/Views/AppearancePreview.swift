@@ -263,17 +263,17 @@ struct FolderGlassPreviewStage: View {
 
     private var folderPanel: some View {
         VStack(spacing: 0) {
+            // Same header as the real panel: close button, folder name, and
+            // nothing else. No app count, no pencil — the name is the rename
+            // control. The clear filler keeps the title centred.
             HStack(spacing: 6) {
                 previewButton("xmark")
                 Spacer(minLength: 4)
                 Text("文件夹")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
-                Text("5 个 App")
-                    .font(.system(size: 6).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.35))
                 Spacer(minLength: 4)
-                previewButton("pencil")
+                Color.clear.frame(width: 14, height: 14)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
