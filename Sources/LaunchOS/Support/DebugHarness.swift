@@ -1016,6 +1016,17 @@ extension LauncherModel {
         check("A6 drop maps to a cell", g.slot(at: iconHit, count: 9) == 4)
         check("A7 drop clamps to last shown",
               g.slot(at: CGPoint(x: art8.midX, y: art8.midY), count: 3) == 2)
+        // A8 — the page strip translates by exactly one page width per turn.
+        // If a page were narrower or wider than the viewport, a turn would
+        // park between two pages or leave a sliver of the neighbour. Built
+        // from the LIVE panel width (the same value the wheel uses as its page
+        // extent), so drawing and input keep sharing one number.
+        let stripGrid = FolderGridMetrics(cellWidth: (folderPanelWidth - 88) / 3,
+                                          cellHeight: 92 + 54,
+                                          iconSize: 92)
+        check("A8 page width equals panel width",
+              abs(stripGrid.gridWidth - folderPanelWidth) < 0.01,
+              "grid=\(Int(stripGrid.gridWidth.rounded())) panel=\(Int(folderPanelWidth.rounded()))")
 
         let folderID = "probe-folder-12"
         let oneFolderID = "probe-folder-3"
