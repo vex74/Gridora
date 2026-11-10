@@ -34,37 +34,36 @@ struct TileView: View {
         dragInfo.value.targetID == tile.id
     }
 
+    /// The fourth glass-driven surface. This is a value derived from the one
+    /// global `glass*` group, not a subscription: the grid is rasterised into
+    /// one layer per page and must not gain per-frame observers.
+    private var highlight: SelectionHighlightStyle {
+        SelectionHighlightStyle(settings: model.settings, iconSize: metrics.iconSize)
+    }
+
+    private var highlightState: SelectionHighlightState {
+        if isMergeTarget { return .mergeTarget }
+        if isSelected { return .selected }
+        if hover && !dragInfo.value.active { return .hover }
+        return .none
+    }
+
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                if hover && !dragInfo.value.active {
-                    RoundedRectangle(cornerRadius: metrics.iconSize * 0.30, style: .continuous)
-                        .fill(.white.opacity(0.13))
-                        .frame(width: metrics.iconSize * 1.20, height: metrics.iconSize * 1.20)
-                        .blur(radius: 18)
-                }
+                SelectionHighlightSurface(style: highlight, state: highlightState)
 
                 TileIcon(tile: tile, size: metrics.iconSize)
-                    .scaleEffect(isMergeTarget ? 1.10 : (hover ? 1.035 : 1))
+                    .scaleEffect(isMergeTarget ? 1.10 : (hover ? highlight.hoverScale : 1))
                     .animation(Motion.quick, value: hover)
                     .animation(Motion.reorder, value: isMergeTarget)
             }
             .frame(width: metrics.iconSize + 18, height: metrics.iconSize + 18)
             .overlay {
-                if isMergeTarget {
-                    RoundedRectangle(cornerRadius: metrics.iconSize * 0.27, style: .continuous)
-                        .stroke(.white.opacity(0.9), lineWidth: 2)
-                        .shadow(color: .white.opacity(0.35), radius: 8)
-                } else if isSelected {
-                    RoundedRectangle(cornerRadius: metrics.iconSize * 0.27, style: .continuous)
-                        .stroke(.white.opacity(0.82), lineWidth: 2.5)
-                        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
-                }
-            }
-            .overlay {
                 if model.flashID == tile.id {
-                    RoundedRectangle(cornerRadius: metrics.iconSize * 0.27, style: .continuous)
+                    RoundedRectangle(cornerRadius: highlight.cornerRadius, style: .continuous)
                         .stroke(.white.opacity(0.75), lineWidth: 2)
+                        .frame(width: highlight.boxSize, height: highlight.boxSize)
                         .scaleEffect(1.14)
                         .opacity(0.0)
                         // Scoped to this tile: a launch used to open an
@@ -83,8 +82,9 @@ struct TileView: View {
                     .padding(.vertical, 2)
                     .background {
                         if isSelected {
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(.white.opacity(0.16))
+                            RoundedRectangle(cornerRadius: min(highlight.cornerRadius * 0.20, 8),
+                                             style: .continuous)
+                                .fill(.white.opacity(highlight.labelFill))
                         }
                     }
                     .shadow(color: .black.opacity(0.55), radius: 3, x: 0, y: 1)
