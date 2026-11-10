@@ -1028,6 +1028,56 @@ extension LauncherModel {
               abs(stripGrid.gridWidth - folderPanelWidth) < 0.01,
               "grid=\(Int(stripGrid.gridWidth.rounded())) panel=\(Int(folderPanelWidth.rounded()))")
 
+        // A9–A14 — the VIEW-LAYER hover path. `FolderAppCell.onContinuousHover`
+        // calls `hoverIndex(atLocal:slot:count:)`, which reuses `iconIndex`.
+        // A1–A4 only tested the pure geometry and therefore stayed green while
+        // the cell's whole `.contentShape(Rectangle())` + `.onHover` still lit
+        // the highlight anywhere in the cell ("range selection"). These assert
+        // the exact method the view calls, in the view's LOCAL coordinates.
+        func localToCell4(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: p.x - cell4.minX, y: p.y - cell4.minY)
+        }
+        check("A9 hoverOnArtworkViewPath",
+              g.hoverIndex(atLocal: localToCell4(iconHit), slot: 4, count: 9) == 4,
+              "got=\(g.hoverIndex(atLocal: localToCell4(iconHit), slot: 4, count: 9).map(String.init) ?? "nil")")
+        check("A10 hoverOnLabelInert",
+              g.hoverIndex(atLocal: localToCell4(labelHit), slot: 4, count: 9) == nil)
+        check("A11 hoverOnCellCornerInert",
+              g.hoverIndex(atLocal: localToCell4(cornerHit), slot: 4, count: 9) == nil)
+        check("A12 hoverOnColumnGapInert",
+              g.hoverIndex(atLocal: localToCell4(gapHit), slot: 4, count: 9) == nil)
+        check("A13 hoverCoverageIsArtworkNotCell",
+              stripGrid.hoverCoverage > 0.30 && stripGrid.hoverCoverage < 0.50,
+              "coverage=\(String(format: "%.3f", stripGrid.hoverCoverage)) "
+              + "legacyWholeCell=1.000 cell=\(Int(stripGrid.cellWidth))x\(Int(stripGrid.cellHeight)) "
+              + "artwork=\(Int(stripGrid.iconBox))x\(Int(stripGrid.iconBox))")
+        let allSlotsAgree = (0..<FolderGridMetrics.perPage).allSatisfy { slot in
+            let center = g.iconCenter(at: slot, in: .zero)
+            let cell = g.cellRect(at: slot)
+            let local = CGPoint(x: center.x - cell.minX, y: center.y - cell.minY)
+            return g.hoverIndex(atLocal: local, slot: slot, count: 9) == slot
+                && g.iconIndex(at: center, count: 9) == slot
+        }
+        check("A14 hoverSharesTapGeometry", allSlotsAgree,
+              "slots=\(FolderGridMetrics.perPage)")
+
+        // The view positions the icon, the tap target AND the highlight with
+        // one rect from the geometry source; it must be the artwork square,
+        // never the whole cell (the old range-selection surface).
+        let localArt = g.artworkLocalRect(at: 4)
+        check("A15 viewArtworkRectIsIconOnly",
+              abs(localArt.width - g.iconBox) < 0.001
+              && abs(localArt.height - g.iconBox) < 0.001
+              && abs(localArt.origin.x - (g.iconRect(at: 4).minX - cell4.minX)) < 0.001
+              && localArt.width < g.cellWidth && localArt.height < g.cellHeight,
+              "art=\(Int(localArt.width))x\(Int(localArt.height)) "
+              + "cell=\(Int(g.cellWidth))x\(Int(g.cellHeight))")
+        // NOTE: A9–A15 assert the geometry function the SwiftUI hover path
+        // actually calls and the rect it draws with. The final on-screen hover
+        // behaviour still needs a human look (no screenshot is available under
+        // the current TCC restrictions); no always-true assertion is added.
+        note("NOTE A hover visual requires a human glance; geometry is asserted above")
+
         let folderID = "probe-folder-12"
         let oneFolderID = "probe-folder-3"
         guard let ids = makeFolder(12, id: folderID) else {
