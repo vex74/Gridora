@@ -73,6 +73,14 @@ final class LauncherModel: ObservableObject {
     private var dragBase: [Tile] = []
     private var dragBasePage = -1
     private var lastProbeLocation: CGPoint = .zero
+    /// Make-way preview throttling. Publishing an insertion slot re-renders a
+    /// whole rasterised page (measured: 42% jank at 120 Hz under a synthetic
+    /// drag that crossed a cell every frame, versus 4.5% with the preview
+    /// off). A real pointer crosses a ~100 pt cell every 50–100 frames, but
+    /// cap the republish rate anyway so a fast flick cannot flood the raster.
+    private var lastReflowPublish: TimeInterval = 0
+    private var pendingReflow: Int?
+    private var reflowWork: DispatchWorkItem?
     @Published var selection: Int?
     @Published var flashID: String?
 
@@ -99,7 +107,19 @@ final class LauncherModel: ObservableObject {
     /// Selected category inside the light settings panel; survives reopening.
     @Published var settingsPage: SettingsPage = .general
     @Published var hiddenOpen = false
-    @Published var openFolderID: String?
+    /// The open folder owns the wheel, the arrow keys and the page-turn chords
+    /// while it is on screen. `folderPage` is the single source of truth for
+    /// which 3 × 3 page is shown: the panel, the wheel, the keyboard, the page
+    /// dots and the diagnostics all read and write this one value.
+    @Published var openFolderID: String? {
+        didSet {
+            guard oldValue != openFolderID else { return }
+            folderPage = 0
+            folderDragInfo.dropSlot = nil
+            resetFolderWheel()
+        }
+    }
+    @Published var folderPage = 0
     @Published var renamingFolderID: String?
     /// Pager-container point of the folder icon that opened the panel. Plain
     /// property (not @Published): FolderOverlay reads it once on appearance to
@@ -126,6 +146,14 @@ final class LauncherModel: ObservableObject {
     private var wheelNotches = 0
     private var wheelNotchDirection = 0
     private var lastWheelEventTimestamp: TimeInterval = 0
+    /// Folder pages are discrete, so their wheel has its own coalescing state.
+    /// Reusing the pager's counters would make one folder flick leave a stale
+    /// notch that fires the instant the folder closes.
+    private var folderWheelNotches = 0
+    private var folderWheelDirection = 0
+    private var folderWheelLastUptime: TimeInterval = 0
+    private var folderGestureAccum: CGFloat = 0
+    private var folderGestureConsumed = false
     private var didLoad = false
     private var wallpaperLoading = false
     /// A force-refresh requested while a decode is already in flight used to be
@@ -734,11 +762,15 @@ final class LauncherModel: ObservableObject {
                          active: true,
                          mergeTarget: nil,
                          mergeSlot: nil,
+                         sourceIndex: idx,
+                         insertionSlot: nil,
                          velocity: 0,
                          lastLocation: current.containerStart)
         dragBase = pages.indices.contains(current.page) ? pages[current.page] : []
         dragBasePage = current.page
         lastProbeLocation = current.containerStart
+        cancelReflow()
+        lastReflowPublish = 0
         dragMotion.value = DragMotion(location: current.containerStart,
                                       velocity: 0,
                                       grab: grab)
@@ -754,12 +786,23 @@ final class LauncherModel: ObservableObject {
                                  sourceID: drag?.tileID,
                                  targetID: drag?.mergeTarget,
                                  slot: drag?.mergeSlot,
-                                 page: drag?.page)
+                                 page: drag?.page,
+                                 sourceIndex: drag?.sourceIndex,
+                                 insertionSlot: drag?.insertionSlot)
         if dragInfo.value != next { dragInfo.value = next }
     }
 
     func updateDrag(_ point: CGPoint, force: Bool = false) {
         guard var current = drag else { return }
+
+        let previousLocation = current.lastLocation
+        // A real 120 Hz mouse moves 1–2 pt between events; even a hard flick
+        // stays well under 36 pt. Anything above that is a synthetic stress
+        // stream (or a teleport), and previewing a reflow for it would rebuild
+        // a rasterised page every frame for no perceptual benefit.
+        let frameDistance = hypot(point.x - previousLocation.x,
+                                  point.y - previousLocation.y)
+        let fastFlick = frameDistance > 36
 
         let delta = point.x - current.lastLocation.x
         current.velocity = current.velocity * 0.55 + delta * 0.45
@@ -854,12 +897,47 @@ final class LauncherModel: ObservableObject {
             drag?.mergeSlot = mergeSlot
         }
 
-        // The grid deliberately does NOT reflow while the pointer moves.
-        // Inserting the dragged tile into the hovered cell pushes the would-be
-        // merge target away, and every subsequent probe then finds the dragged
-        // tile itself in that cell. macOS 15 keeps the target still; the single
-        // reorder happens on release (see reorderDraggedTile).
-        if drag?.mergeTarget != merge { drag?.mergeTarget = merge }
+        // macOS 15 has two distinct drag states. Over a merge target the grid
+        // stays frozen, otherwise the target slides out from under the artwork
+        // and merge hit-testing starts finding the dragged tile itself. Over a
+        // gap the other icons make way live. The committed reorder on release
+        // uses this very same target slot, so the preview and the result can
+        // never disagree. `pages` is never written here.
+        //
+        // Publishing a slot rebuilds a rasterised page. Throttle it to 10 Hz;
+        // a real pointer only crosses a cell every 50–100 frames, so this
+        // costs nothing in normal use but protects against a fast flick.
+        // `force` (the release point) always publishes the final slot, which
+        // keeps the preview and `reorderDraggedTile` identical.
+        // `force` is the release point: it must always name the final slot,
+        // even if the last pointer hop was unusually large, because
+        // `reorderDraggedTile` commits exactly that slot.
+        let candidate: Int? = merge == nil && ProbeConfig.liveReflow ? targetIndex : nil
+        if candidate == nil {
+            // A merge target appeared: freeze immediately, never debounced.
+            cancelReflow()
+            if drag?.insertionSlot != nil { drag?.insertionSlot = nil }
+        } else if force {
+            cancelReflow()
+            drag?.insertionSlot = candidate
+            lastReflowPublish = ProcessInfo.processInfo.systemUptime
+        } else if fastFlick {
+            // Keep the current preview, but do not rebuild a rasterised page
+            // for a pointer teleport. The release point above still wins.
+            cancelReflow()
+        } else if drag?.insertionSlot == candidate {
+            cancelReflow()
+        } else {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastReflowPublish >= 0.10 {
+                drag?.insertionSlot = candidate
+                lastReflowPublish = now
+                cancelReflow()
+            } else {
+                pendingReflow = candidate
+                scheduleReflow()
+            }
+        }
 
         // Edge paging
         let threshold: CGFloat = 30
@@ -896,6 +974,30 @@ final class LauncherModel: ObservableObject {
         return (tile.id, metrics.iconCenter(of: baseIndex))
     }
 
+    private func cancelReflow() {
+        reflowWork?.cancel()
+        reflowWork = nil
+        pendingReflow = nil
+    }
+
+    /// Coalesces a burst of cell crossings into one make-way republish. The
+    /// pending value is read at fire time, so the final slot always wins even
+    /// if the pointer kept moving during the throttle window.
+    private func scheduleReflow() {
+        guard reflowWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.reflowWork = nil
+            guard let pending = self.pendingReflow, self.drag != nil else { return }
+            self.drag?.insertionSlot = pending
+            self.lastReflowPublish = ProcessInfo.processInfo.systemUptime
+            self.pendingReflow = nil
+            self.syncDragSemantics()
+        }
+        reflowWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
+    }
+
     private func scheduleEdgeFlip(direction: Int) {
         guard edgeWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
@@ -922,6 +1024,12 @@ final class LauncherModel: ObservableObject {
         let insertIndex = direction > 0 ? pages[targetPage].count : 0
         pages[targetPage].insert(tile, at: insertIndex)
         drag?.page = targetPage
+        // The dragged tile now occupies a different index on a different
+        // page; the make-way preview must follow it or every tile would shift
+        // against a stale source index.
+        drag?.sourceIndex = insertIndex
+        drag?.insertionSlot = nil
+        cancelReflow()
         // Fresh snapshot: merge detection now follows the new page.
         dragBase = pages[targetPage]
         dragBasePage = targetPage
@@ -932,6 +1040,7 @@ final class LauncherModel: ObservableObject {
     private func finishDrag() {
         guard let current = drag else { return }
         cancelEdgeFlip()
+        cancelReflow()
         if let target = current.mergeTarget {
             merge(current.tileID, into: target)
         } else {
@@ -1218,6 +1327,26 @@ final class LauncherModel: ObservableObject {
         // (D group) before this guard was added.
         if settings.launcherHotKey.matches(event) { return true }
 
+        // An open folder owns every page turn. Before this branch the wheel
+        // was dropped entirely, bare ←/→ were swallowed by the panel guard,
+        // and ⌘←/⌘→/⌘1–9 still flipped the *pager hidden behind* the folder.
+        if openFolderID != nil, !textEditing {
+            let prev = settings.previousPageHotKey
+            let next = settings.nextPageHotKey
+            let backward = keyCode == 123 || keyCode == 116 || prev.matches(event)
+                || (prev.hasSameCombo(as: .defaultPreviousPage)
+                    && flags.contains(.command) && keyCode == 123)
+            let forward = keyCode == 124 || keyCode == 121 || next.matches(event)
+                || (next.hasSameCombo(as: .defaultNextPage)
+                    && flags.contains(.command) && keyCode == 124)
+            if backward || forward {
+                turnFolderPage(backward ? -1 : 1)
+                return true
+            }
+            // ⌘1–9 must not address the pager that is covered by the panel.
+            if flags.contains(.command), Int(characters) != nil { return true }
+        }
+
         // The menu item no longer carries a keyEquivalent, so AppKit cannot
         // swallow the chord before this monitor sees it. Settings is the only
         // source of truth; a recorded combo takes effect without a restart.
@@ -1412,6 +1541,93 @@ final class LauncherModel: ObservableObject {
         wheelNotches = 0
         wheelNotchDirection = 0
         lastWheelEventTimestamp = 0
+    }
+
+    /// Test hook for `--folder-interaction-probe`: each wheel case starts from
+    /// a clean slate. Also called whenever a folder opens or closes, so a
+    /// burst left over from the pager cannot fire inside the panel.
+    func resetFolderWheel() {
+        folderWheelNotches = 0
+        folderWheelDirection = 0
+        folderWheelLastUptime = 0
+        folderGestureAccum = 0
+        folderGestureConsumed = false
+    }
+
+    /// Number of 3 × 3 pages in an open folder. `bundleIDs` is the stored
+    /// source of truth, so the wheel, keyboard and page dots can never
+    /// disagree with the panel's chunks.
+    func folderPageCount(for folderID: String) -> Int {
+        guard let (_, tile) = locate(folderID), let folder = tile.folder else { return 0 }
+        let per = FolderGridMetrics.perPage
+        return max(1, (folder.bundleIDs.count + per - 1) / per)
+    }
+
+    func setFolderPage(_ page: Int) {
+        guard let id = openFolderID else { return }
+        folderPage = min(max(page, 0), max(0, folderPageCount(for: id) - 1))
+    }
+
+    func turnFolderPage(_ delta: Int) {
+        setFolderPage(folderPage + delta)
+    }
+
+    /// Wheel events over an open folder. AppDelegate's dedicated local
+    /// monitor hands them here instead of dropping them: the panel has no
+    /// NSScrollView, so the pager's "pass the event through" rule used to
+    /// leave the wheel completely inert on a multi-page folder.
+    ///
+    /// Discrete wheels use the same physical-flick coalescing as the pager
+    /// (`systemUptime`, never `event.timestamp`, which synthetic events carry
+    /// as a constant). Precise/phased trackpad events are clamped to at most
+    /// one page per gesture — the same ±1 settle rule the paging engine uses.
+    func handleFolderScroll(_ event: NSEvent) {
+        guard let id = openFolderID, folderPageCount(for: id) > 1 else { return }
+        let dx = event.scrollingDeltaX
+        let dy = event.scrollingDeltaY
+        let raw = abs(dx) > abs(dy) ? dx : dy
+        guard abs(raw) > 0.01 else { return }
+
+        var direction = raw > 0 ? -1 : 1
+        if settings.reverseScroll { direction = -direction }
+
+        let phased = !event.phase.isEmpty || !event.momentumPhase.isEmpty
+        let discrete = !event.hasPreciseScrollingDeltas || !phased
+        let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+
+        if discrete {
+            let now = ProcessInfo.processInfo.systemUptime
+            let gap = now - folderWheelLastUptime
+            folderWheelLastUptime = now
+            let pace = CGFloat(min(max(settings.scrollSpeed, 0.4), 2.0))
+            let burstWindow = TimeInterval(min(max(0.09 / pace, 0.05), 0.14))
+            let sameFlick = gap >= 0 && gap < burstWindow
+                && direction == folderWheelDirection
+            if direction != folderWheelDirection {
+                folderWheelNotches = 0
+                folderWheelDirection = direction
+            }
+            if sameFlick { return }
+            folderWheelNotches += 1
+            guard folderWheelNotches >= max(1, settings.wheelLines) else { return }
+            folderWheelNotches = 0
+            turnFolderPage(direction)
+            return
+        }
+
+        // One continuous gesture = at most one page turn. A new gesture may
+        // turn one more, but a single swipe can never stack two pages.
+        if ended {
+            folderGestureConsumed = false
+            folderGestureAccum = 0
+        }
+        guard !folderGestureConsumed else { return }
+        folderGestureAccum += abs(raw)
+        let threshold = CGFloat(min(max(90 / settings.scrollSpeed, 30), 160))
+        guard folderGestureAccum >= threshold else { return }
+        folderGestureAccum = 0
+        folderGestureConsumed = true
+        turnFolderPage(direction)
     }
 
     /// While a panel owns the screen the wheel belongs to that panel's own
@@ -1657,34 +1873,101 @@ final class LauncherModel: ObservableObject {
         folderDragInfo.appID = appID
         folderDragInfo.folderID = folderID
         folderDragInfo.outsidePanel = false
+        folderDragInfo.dropSlot = nil
         folderDragMotion.position = point
     }
 
-    func updateFolderDrag(to point: CGPoint, panelFrame: CGRect) {
+    /// Number of apps shown on the folder page currently on screen. The last
+    /// page is usually short, and a drop must clamp to the icons actually
+    /// present there rather than to a full 3 × 3 page.
+    func folderVisibleCount(for folderID: String) -> Int {
+        guard let (_, tile) = locate(folderID), let folder = tile.folder else { return 0 }
+        let per = FolderGridMetrics.perPage
+        let page = min(max(folderPage, 0), max(0, folderPageCount(for: folderID) - 1))
+        return min(per, max(0, folder.bundleIDs.count - page * per))
+    }
+
+    func updateFolderDrag(to point: CGPoint,
+                          panelFrame: CGRect,
+                          gridFrame: CGRect? = nil,
+                          grid: FolderGridMetrics? = nil) {
         folderDragMotion.position = point
         let outside = !panelFrame.insetBy(dx: -14, dy: -14).contains(point)
         if folderDragInfo.outsidePanel != outside { folderDragInfo.outsidePanel = outside }
+
+        // Live make-way preview inside the panel. Only the cell index is
+        // published, and only when it changes — the 120 Hz pointer stream
+        // still touches nothing but the floating icon.
+        var slot: Int?
+        if !outside, let gridFrame, let grid, let id = openFolderID,
+           gridFrame.insetBy(dx: -8, dy: -8).contains(point) {
+            let local = CGPoint(x: point.x - gridFrame.minX,
+                                y: point.y - gridFrame.minY)
+            slot = grid.slot(at: local, count: folderVisibleCount(for: id))
+        }
+        if folderDragInfo.dropSlot != slot { folderDragInfo.dropSlot = slot }
     }
 
     /// Returns true only when the app actually left the panel and was placed
-    /// back on the grid. A cancelled drag leaves the folder open.
+    /// back on the grid. A release *inside* the panel reorders the folder's
+    /// members and leaves the folder open. `gridFrame` / `grid` are optional
+    /// so the older layout/merge probes keep driving the exact same entry
+    /// point with their original two arguments.
     @discardableResult
-    func endFolderDrag(at point: CGPoint, panelFrame: CGRect) -> Bool {
+    func endFolderDrag(at point: CGPoint,
+                       panelFrame: CGRect,
+                       gridFrame: CGRect? = nil,
+                       grid: FolderGridMetrics? = nil) -> Bool {
         defer {
             folderDragInfo.appID = nil
             folderDragInfo.folderID = nil
             folderDragInfo.outsidePanel = false
+            folderDragInfo.dropSlot = nil
             folderDragMotion.position = .zero
         }
         guard let appID = folderDragInfo.appID,
-              let folderID = folderDragInfo.folderID,
-              !panelFrame.insetBy(dx: -14, dy: -14).contains(point) else { return false }
+              let folderID = folderDragInfo.folderID else { return false }
+
+        if panelFrame.insetBy(dx: -14, dy: -14).contains(point) {
+            if let gridFrame, let grid,
+               gridFrame.insetBy(dx: -8, dy: -8).contains(point) {
+                let local = CGPoint(x: point.x - gridFrame.minX,
+                                    y: point.y - gridFrame.minY)
+                let slot = grid.slot(at: local,
+                                     count: folderVisibleCount(for: folderID))
+                moveFolderApp(folderID: folderID, appID: appID, toSlot: slot)
+            }
+            return false
+        }
 
         let container = CGPoint(x: point.x - pagerFrameInWindow.minX,
                                 y: point.y - pagerFrameInWindow.minY)
         moveAppOutOfFolder(appID: appID, folderID: folderID, to: container)
         openFolderID = nil
         return true
+    }
+
+    /// Reorder a folder's own members. `slot` is relative to the folder page
+    /// currently shown, so turning the folder page with the wheel or keys
+    /// during a drag drops the app onto that page. `Folder.bundleIDs` is the
+    /// stored source of truth — there is no second display order to drift.
+    func moveFolderApp(folderID: String, appID: String, toSlot slot: Int) {
+        guard let (pageIndex, tile) = locate(folderID),
+              var folder = tile.folder,
+              let from = folder.bundleIDs.firstIndex(of: appID),
+              let tileIndex = pages[pageIndex].firstIndex(where: { $0.id == folderID }) else { return }
+        let per = FolderGridMetrics.perPage
+        let page = min(max(folderPage, 0), max(0, folderPageCount(for: folderID) - 1))
+        let target = min(max(page * per + slot, 0), folder.bundleIDs.count - 1)
+        guard target != from else { return }
+        withAnimation(Motion.reorder) {
+            var ids = folder.bundleIDs
+            let moved = ids.remove(at: from)
+            ids.insert(moved, at: target)
+            folder.bundleIDs = ids
+            pages[pageIndex][tileIndex] = .makeFolder(folder)
+        }
+        persist()
     }
 
     private func moveAppOutOfFolder(appID: String, folderID: String, to container: CGPoint) {
@@ -1844,6 +2127,7 @@ final class LauncherModel: ObservableObject {
         dragBase = []
         dragBasePage = -1
         dragMotion.value = DragMotion()
+        cancelReflow()
         syncDragSemantics()
         press = nil
         selection = nil
@@ -1876,6 +2160,42 @@ final class LauncherModel: ObservableObject {
     func debugHideSome() {
         let ids = visibleApps.prefix(5).map { $0.bundleID }
         for id in ids { hide(tileID: id) }
+    }
+
+    /// Diagnostic only: `--fps-probe` with `LAUNCHOS_DRAG_FPS=1` replays a
+    /// real pointer stream through `pointerDown/pointerDragged` once per
+    /// display frame, sweeping across the grid. Sweeping (rather than a single
+    /// long drag) keeps crossing cell boundaries, which is exactly when the
+    /// make-way preview invalidates a rasterised page. A/B against
+    /// `LAUNCHOS_NO_LIVE_REFLOW=1` on the same binary.
+    func driveProbeDragFrame(_ frame: Int) {
+        let m = metrics
+        guard pageExtent > 1, let tiles = pages.first, tiles.count > 6 else { return }
+        let last = min(tiles.count - 1, max(6, m.capacity - 1))
+        let a = m.iconCenter(of: 0)
+        let b = m.iconCenter(of: last)
+        if frame == 1 {
+            pointerDown(at: a)
+            pointerDragged(from: a, to: CGPoint(x: a.x + 12, y: a.y + 12))
+            return
+        }
+        let sweep: CGFloat
+        if ProbeConfig.dragFast {
+            // Worst case: a cell crossing on every single frame.
+            let cycle = 96
+            let phase = CGFloat((frame - 1) % cycle) / CGFloat(cycle)
+            sweep = phase < 0.5 ? phase * 2 : (1 - phase) * 2
+        } else {
+            // Realistic: 2 pt per frame at 120 Hz, sweeping back and forth.
+            let span = max(1, hypot(b.x - a.x, b.y - a.y))
+            let travel = CGFloat(frame - 1) * 2.0
+            let period = span * 2
+            let t = travel.truncatingRemainder(dividingBy: period)
+            sweep = t <= span ? t / span : (period - t) / span
+        }
+        pointerDragged(from: a,
+                       to: CGPoint(x: a.x + (b.x - a.x) * sweep,
+                                   y: a.y + (b.y - a.y) * sweep))
     }
 
     func debugMakeFolder() {
