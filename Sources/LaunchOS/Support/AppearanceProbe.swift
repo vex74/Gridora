@@ -197,6 +197,81 @@ enum AppearanceProbe {
             check("G6 stateRoundTrip", false, "JSON error=\(error)")
         }
 
+        // H. The collapsed folder tile must be driven by the SAME five keys as
+        // the open panel. Separate formulas here would be the exact bug that
+        // let the small icon stay a black square after the panel was glassed.
+        let iconSize: CGFloat = 80
+        let icon0 = FolderIconGlass(settings: base, size: iconSize)
+        let panel0 = FolderGlassSnapshot(settings: base)
+        check("H1 sameSettingsAsPanel",
+              icon0.style == panel0.style
+              && icon0.tintPercent == panel0.tintPercent
+              && icon0.radius == panel0.radius
+              && icon0.scrimPercent == panel0.scrimPercent,
+              "icon=\(icon0.readout) panel=\(panel0.readout) "
+              + "iconEnabled=\(icon0.enabled) panelEnabled=\(panel0.enabled)")
+        check("H2 defaultGeometryUnchanged",
+              abs(icon0.cornerRadius - iconSize * 0.235) < 0.001,
+              "corner=\(f(icon0.cornerRadius)) expected=\(f(iconSize * 0.235))")
+
+        var j = base
+        j.folderGlassEnabled = false
+        j.folderGlassStyle = .clear
+        j.folderGlassTint = 0.61
+        j.folderGlassRadius = 34
+        j.folderGlassScrim = 0.52
+        let icon1 = FolderIconGlass(settings: j, size: iconSize)
+        check("H3 tracksAllFive",
+              !icon1.enabled && icon1.style == .clear && icon1.tintPercent == 61
+              && icon1.radius == 34 && icon1.scrimPercent == 52
+              && icon1.modeText == "原材质"
+              && abs(icon1.innerDim - 0.26) < 0.001
+              && icon1 != icon0,
+              "icon1=\(icon1.readout) dim=\(f(icon1.innerDim))")
+
+        var k = base
+        k.folderGlassRadius = 8
+        let tight = FolderIconGlass(settings: k, size: iconSize)
+        k.folderGlassRadius = 36
+        let round = FolderIconGlass(settings: k, size: iconSize)
+        check("H4 radiusClampedAndMonotonic",
+              tight.cornerRadius >= iconSize * 0.10
+              && round.cornerRadius <= iconSize * 0.42
+              && tight.cornerRadius < icon0.cornerRadius
+              && icon0.cornerRadius < round.cornerRadius,
+              "8pt=\(f(tight.cornerRadius)) 24pt=\(f(icon0.cornerRadius)) "
+              + "36pt=\(f(round.cornerRadius))")
+
+        var l = base
+        l.searchGlassEnabled = false
+        l.searchGlassStyle = .clear
+        l.searchGlassTint = 0.70
+        l.searchGlassRadius = 8
+        l.searchScrim = 0.60
+        check("H5 searchCannotMoveEitherFolderSurface",
+              FolderIconGlass(settings: l, size: iconSize) == icon0
+              && FolderGlassSnapshot(settings: l) == panel0
+              && GlassPreviewSnapshot(settings: l) != GlassPreviewSnapshot(settings: base),
+              "iconUnchanged=\(FolderIconGlass(settings: l, size: iconSize) == icon0) "
+              + "panelUnchanged=\(FolderGlassSnapshot(settings: l) == panel0)")
+
+        let small = FolderIconGlass(settings: base, size: 46)
+        check("H6 sizeOnlyChangesGeometry",
+              small.enabled == icon0.enabled && small.style == icon0.style
+              && small.tintPercent == icon0.tintPercent
+              && small.radius == icon0.radius
+              && small.scrimPercent == icon0.scrimPercent
+              && small.cornerRadius < icon0.cornerRadius,
+              "46pt=\(f(small.cornerRadius)) 80pt=\(f(icon0.cornerRadius))")
+
+        let expectedEnabled = !ProbeConfig.folderIconNoGlass
+            && (ProbeConfig.folderIconPlate || ProbeConfig.noRaster)
+        check("H7 rollbackSwitchHonoured",
+              icon0.enabled == expectedEnabled,
+              "iconEnabled=\(icon0.enabled) expected=\(expectedEnabled) "
+              + "noGlass=\(ProbeConfig.folderIconNoGlass) "
+              + "plate=\(ProbeConfig.folderIconPlate) noRaster=\(ProbeConfig.noRaster)")
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")

@@ -179,7 +179,7 @@ struct FolderGlassPreviewStage: View {
             }
 
             stage
-                .frame(height: 132)
+                .frame(height: 176)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.cardRadius,
                                             style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: DesignTokens.cardRadius,
@@ -191,21 +191,74 @@ struct FolderGlassPreviewStage: View {
                 .font(.system(size: DesignTokens.caption).monospacedDigit())
                 .foregroundStyle(DesignTokens.settingsMuted)
                 .fixedSize(horizontal: false, vertical: true)
+            Text(iconGlass.readout)
+                .font(.system(size: DesignTokens.caption).monospacedDigit())
+                .foregroundStyle(DesignTokens.settingsMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("文件夹外观实时预览：\(snapshot.modeText)，\(snapshot.readout)")
+        .accessibilityLabel("文件夹外观实时预览：\(snapshot.modeText)，\(snapshot.readout)；"
+                            + "网格小图标 \(iconGlass.modeText)，\(iconGlass.readout)")
+    }
+
+    /// The collapsed tile uses the very same mapping as the grid; showing it
+    /// beside the open panel makes "同步" visible while a slider moves.
+    private var iconGlass: FolderIconGlass {
+        FolderIconGlass(settings: model.settings, size: 46)
     }
 
     private var stage: some View {
-        ZStack {
-            DesignTokens.canvas
-            RadialGradient(colors: [DesignTokens.auroraCoolA.opacity(0.55), .clear],
-                           center: .topLeading, startRadius: 20, endRadius: 420)
-            // Mirrors the live sheet: glass needs less opaque dimming behind it.
-            Color.black.opacity(model.settings.folderGlassScrim
-                                * (model.settings.folderGlassEnabled ? 0.45 : 1.0))
-            folderPanel.frame(width: 208)
+        VStack(spacing: 8) {
+            ZStack {
+                DesignTokens.canvas
+                RadialGradient(colors: [DesignTokens.auroraCoolA.opacity(0.55), .clear],
+                               center: .topLeading, startRadius: 20, endRadius: 420)
+                // Mirrors the live sheet: glass needs less opaque dimming behind it.
+                Color.black.opacity(model.settings.folderGlassScrim
+                                    * (model.settings.folderGlassEnabled ? 0.45 : 1.0))
+                folderPanel.frame(width: 208)
+            }
+            HStack(spacing: 10) {
+                smallIconPreview
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("网格中的文件夹小图标")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.78))
+                    Text("与面板共用同一组参数")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
         }
+    }
+
+    private var smallIconPreview: some View {
+        let g = iconGlass
+        let shape = RoundedRectangle(cornerRadius: g.enabled ? g.cornerRadius : 46 * 0.235,
+                                     style: .continuous)
+        return ZStack {
+            if g.enabled {
+                FolderIconGlassSurface(glass: g)
+            } else {
+                shape
+                    .fill(.white.opacity(0.13))
+                    .background(.ultraThinMaterial, in: shape)
+                    .overlay { shape.stroke(.white.opacity(0.18), lineWidth: 0.8) }
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(11), spacing: 3), count: 3),
+                      spacing: 3) {
+                ForEach(0..<6, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(.white.opacity(0.24 + Double(i) * 0.05))
+                        .frame(width: 11, height: 11)
+                }
+            }
+            .padding(4)
+        }
+        .frame(width: 46, height: 46)
     }
 
     private var folderPanel: some View {

@@ -131,6 +131,13 @@
 - **性能**：旧/新 release 交替 4 轮翻页，old 中位 jank 0.80% / new 0.55%，p95 均 6.50ms，判无回归。文件夹玻璃只在文件夹打开时存在，不进入 165 个常驻 tile。
 - **state**：新增 5 个 settings 键，老 state 缺键一律升级为出厂默认；布局字段 `pages / hidden / manualHidden / pinned / usage` 不由本改动写入，云端同步只带布局、不带外观设置。
 
+## 网格文件夹小图标液态玻璃（2026-11-10，用户「缩小的也要同步改啊」）
+- **硬事实（禁止静态推理）**：`glassEffect` 放进 `PageSlot.drawingGroup()` 会被完全扁平掉 —— 默认光栅化下开/关玻璃 layer 树都是 `backdrop=0 portal=0 total=97`；`LAUNCHOS_NO_RASTER=1` 时玻璃层出现（`15 / 30`）但整页 layer 从 97 暴涨到 2141，翻页 jank **1.80% → 4.80%**、p95 **6.50ms → 10.39ms**。**不要为了真玻璃关掉光栅化，也不要把 glassEffect 写回 tile 里。**
+- **唯一可行结构**：玻璃板画在 `PageSlot` 的 `.background`（`drawingGroup()` 之后、光栅化之外），按 `GridMetrics.iconCenter(of:)` 定位；`FolderIconView` 在页内只画缩略 App（`EnvironmentValues.folderGlassPlateProvided` 标记），页外（拖拽视觉 / 隐藏 App / 设置预览）自己画独立玻璃。玻璃板不订阅 offset，整组仍由唯一一个 `.offset` 平移。实测 `backdrop 9→0 / portal 18→0`，layer 总数仅 274。
+- **参数同步**：`FolderIconGlass(settings:size:)` 是纯函数，五个值全部读 `folderGlass*`，不新增 settings 键。面板圆角 8–36pt 按比例映射到图标并 clamp 到 `size×0.10…0.42`（默认 24pt 恰好回到原 `size×0.235`）；`folderGlassScrim` 映射成图标内层暗度 `×0.5`；玻璃一律 `interactive: false`（每个 tile 挂响应式 backdrop 会进翻页路径）。
+- **回退开关**：`LAUNCHOS_FOLDER_ICON_NOPLATE=1` 关闭页背景玻璃（单变量 A/B 与紧急回退），`LAUNCHOS_FOLDER_ICON_NOGLASS=1` 让小图标整体回原材质。`--folder-icon-glass-probe` 默认必须 PASS；`NOPLATE=1` 下按设计 FAIL，别拿它当回归失败。
+- **性能**：同二进制 4 轮交替翻页 A/B，玻璃开 1.80% / 6.50ms、关 2.00% / 6.51ms；开与关各 1 秒静止帧采样 p95 均 6.50ms、jank 均 0%。`--appearance-probe` H1–H7 固化参数同源、默认几何、圆角 clamp、尺寸无关、与搜索互不串扰；回归必须包含 `--folder-glass-probe` 与 `--folder-icon-glass-probe` 两个真入口。
+
 ## 文件选择面板必须抬高窗口层级（2026-11-06，壁纸无法更换）
 - **铁证（同 SDK 最小 AppKit 实验）**：主窗口 `level=19`、菜单栏遮盖层 `statusWindow+1=26`，而 `NSOpenPanel.beginWithCompletionHandler:` 是 **modeless level-0 窗口**。实测 `main=19 cover=26 panelLevel=0 panelVisible=true panelKey=false nsappActive=false panelAboveMain=false panelAboveCover=false` → 面板确实创建了，但完全埋在启动台底下，点不到也输不进字，用户读作「按钮没反应」。把 `panel.level = statusWindow+2 (27)` 且先 `NSApp.activate(ignoringOtherApps: true)` → `panelLevel=27 panelKey=true nsappActive=true aboveMain=true aboveCover=true`。
 - **所有 NSOpenPanel / NSSavePanel 都必须走 `Support/FilePanels.swift`**：`prepare()` 设层级 + 激活 + 打开计数，`release()` 在 completion / runModal 返回后释放计数。当前 4 个调用点：选壁纸、备份布局、恢复布局、添加应用位置（后者用同步 `runModal()`）。新增调用点别再直接 `panel.begin`。

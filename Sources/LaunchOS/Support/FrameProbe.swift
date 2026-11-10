@@ -21,6 +21,16 @@ enum ProbeConfig {
     static let noDrift = ProcessInfo.processInfo.environment["LAUNCHOS_NO_DRIFT"] == "1"
     static let flatBackdrop = ProcessInfo.processInfo.environment["LAUNCHOS_FLAT_BACKDROP"] == "1"
     static let noRaster = ProcessInfo.processInfo.environment["LAUNCHOS_NO_RASTER"] == "1"
+    /// Measured rollback for the collapsed folder icon's glass. The icon lives
+    /// inside the rasterised paging path, so this stays available as a single
+    /// variable A/B switch even after the feature ships enabled by default.
+    static let folderIconNoGlass =
+        ProcessInfo.processInfo.environment["LAUNCHOS_FOLDER_ICON_NOGLASS"] == "1"
+    /// `glassEffect` is flattened away inside PageSlot.drawingGroup(). The
+    /// folder plates therefore live in the page's background, OUTSIDE the
+    /// raster, and this env is the single-variable A/B / rollback switch.
+    static let folderIconPlate =
+        ProcessInfo.processInfo.environment["LAUNCHOS_FOLDER_ICON_NOPLATE"] != "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")

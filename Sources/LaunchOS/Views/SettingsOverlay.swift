@@ -568,15 +568,15 @@ struct SettingsOverlay: View {
             }
 
             header(title: "文件夹 · 液态玻璃",
-                   caption: "打开文件夹时面板本身的材质，与搜索分开调节。着色 0–75% / 圆角 8–36pt / 背板压暗 0–60%；关闭后回到原来的近黑实底。下方预览与参数同屏实时变化。")
+                   caption: "打开文件夹时的面板，以及网格里那个缩小的文件夹图标，共用这一组参数、同步变化。着色 0–75% / 圆角 8–36pt / 背板压暗 0–60%；关闭后两处都回到原来的实底。下方预览同时展示两处。")
 
             card {
                 FolderGlassPreviewStage()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 divider
-                toggleRow(title: "打开文件夹时使用液态玻璃",
-                          subtitle: "面板透出背后的壁纸与网格，白字仍保持可读",
+                toggleRow(title: "文件夹使用液态玻璃",
+                          subtitle: "打开的面板与网格小图标一起变更，白字仍保持可读",
                           isOn: $model.settings.folderGlassEnabled)
                 divider
                 segmentedRow(title: "玻璃风格",

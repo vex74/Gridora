@@ -135,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuBarProbeIfNeeded()
         startSearchGlassProbeIfNeeded()
         startFolderGlassProbeIfNeeded()
+        startFolderIconGlassProbeIfNeeded()
         startWallpaperPickerProbeIfNeeded()
         startSearchQueryProbeIfNeeded()
         startSearchRealUseProbeIfNeeded()
@@ -402,6 +403,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          ? "close PASS" : "close FAIL")
                             self.model.settings.folderGlassEnabled = true
                             lines.append(glassDelta && tunedOK ? "PASS" : "FAIL")
+                            lines.append("DONE")
+                            try? (lines.joined(separator: "\n") + "\n")
+                                .write(toFile: log, atomically: true, encoding: .utf8)
+                            NSApp.terminate(nil)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Diagnostic: `LaunchOS --folder-icon-glass-probe` keeps the GRID visible
+    /// (no open folder, no search) and A/B's the folder-glass switch on the
+    /// collapsed folder tiles. Those tiles live inside PageSlot.drawingGroup(),
+    /// so this is the only way to learn whether real glass renders through the
+    /// paging raster and what it costs per frame. Off by default; quits by
+    /// itself. No screenshot is attempted.
+    private func startFolderIconGlassProbeIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("--folder-icon-glass-probe") else { return }
+        let log = "/tmp/launchos-folder-icon-glass.log"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            guard let self else { return }
+            self.model.settingsOpen = false
+            self.model.hiddenOpen = false
+            self.model.searchOpen = false
+            self.model.openFolderID = nil
+            let folders = self.model.allFolders
+            guard !folders.isEmpty else {
+                try? "PROBE folder icon glass\nFAIL no folder in state\nDONE\n"
+                    .write(toFile: log, atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+            let iconSize = self.model.metrics.iconSize
+            let s = self.model.settings
+            let icon0 = FolderIconGlass(settings: s, size: iconSize)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self else { return }
+                let onTree = self.treeClasses(in: self.window?.contentView)
+                var lines = [
+                    "PROBE collapsed folder icon liquid glass",
+                    "system=\(ProcessInfo.processInfo.operatingSystemVersionString)",
+                    "glassAvailable=\(SearchGlass.isAvailable) "
+                        + "plate=\(ProbeConfig.folderIconPlate) "
+                        + "noRaster=\(ProbeConfig.noRaster) "
+                        + "noGlass=\(ProbeConfig.folderIconNoGlass)",
+                    "folders=\(folders.count) iconSize=\(Int(iconSize.rounded())) "
+                        + "pages=\(self.model.pageCount) openFolderID=\(self.model.openFolderID ?? "nil")",
+                    "enabled=\(s.folderGlassEnabled) style=\(s.folderGlassStyle.rawValue) "
+                        + "tint=\(s.folderGlassTint) radius=\(s.folderGlassRadius) scrim=\(s.folderGlassScrim)",
+                    "iconSnapshot=\(icon0.readout)",
+                    "glassOn layers=\(self.glassLayerCounts(onTree))",
+                    "glassOn tree=\(self.classHistogram(onTree))"
+                ]
+                self.sampleFrames(for: 1.0) { onFrames in
+                    lines.append("glassOn frames \(onFrames)")
+                    self.model.settings.folderGlassEnabled = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                        guard let self else { return }
+                        let offTree = self.treeClasses(in: self.window?.contentView)
+                        let iconOff = FolderIconGlass(settings: self.model.settings, size: iconSize)
+                        lines.append("glassOff layers=\(self.glassLayerCounts(offTree))")
+                        lines.append("iconOff mode=\(iconOff.modeText) radius=\(Int(iconOff.cornerRadius.rounded()))pt")
+                        self.sampleFrames(for: 1.0) { offFrames in
+                            lines.append("glassOff frames \(offFrames)")
+                            let backdropOn = onTree.filter { $0.contains("CABackdropLayer") }.count
+                            let backdropOff = offTree.filter { $0.contains("CABackdropLayer") }.count
+                            let portalOn = onTree.filter { $0.contains("SDFPortalLayer") }.count
+                            let portalOff = offTree.filter { $0.contains("SDFPortalLayer") }.count
+                            lines.append("A/B backdrop \(backdropOn)->\(backdropOff) portal \(portalOn)->\(portalOff)")
+                            // A PASS needs a real glass-layer delta on the same
+                            // grid. If drawingGroup flattens the effect away,
+                            // the probe fails instead of silently claiming a
+                            // visual change that never reached the screen.
+                            let glassDelta = backdropOn > backdropOff || portalOn > portalOff
+                            lines.append(glassDelta ? "A/B PASS" : "A/B FAIL glass layers did not change")
+                            lines.append(!iconOff.enabled && iconOff.modeText == "原材质"
+                                         ? "switch PASS" : "switch FAIL")
+                            var tuned = self.model.settings
+                            tuned.folderGlassEnabled = true
+                            tuned.folderGlassStyle = .clear
+                            tuned.folderGlassTint = 0.55
+                            tuned.folderGlassRadius = 34
+                            tuned.folderGlassScrim = 0.44
+                            let t = FolderIconGlass(settings: tuned, size: iconSize)
+                            let expected = min(max(iconSize * 0.235
+                                                   * CGFloat(34 / Settings.defaultFolderGlassRadius),
+                                                   iconSize * 0.10), iconSize * 0.42)
+                            let geometryOK = abs(t.cornerRadius - expected) < 0.001
+                            lines.append(t.enabled && t.style == .clear && t.tintPercent == 55
+                                         && t.radius == 34 && t.scrimPercent == 44 && geometryOK
+                                         ? "params PASS \(t.readout)" : "params FAIL \(t.readout)")
+                            self.model.settings.folderGlassEnabled = true
+                            lines.append(self.model.openFolderID == nil
+                                         ? "grid PASS" : "grid FAIL folder stayed open")
+                            lines.append(glassDelta && !iconOff.enabled && t.enabled
+                                         && geometryOK ? "PASS" : "FAIL")
                             lines.append("DONE")
                             try? (lines.joined(separator: "\n") + "\n")
                                 .write(toFile: log, atomically: true, encoding: .utf8)

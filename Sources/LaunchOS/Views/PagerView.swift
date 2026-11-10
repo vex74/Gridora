@@ -21,7 +21,9 @@ struct PagerView: View {
                              size: geo.size,
                              pages: model.pages,
                              metrics: model.metrics,
-                             vertical: model.settings.vertical)
+                             vertical: model.settings.vertical,
+                             glass: FolderIconGlass(settings: model.settings,
+                                                    size: model.metrics.iconSize))
 
                 // A separate view with its own observed objects. Pointer
                 // movement re-evaluates this layer only — never PagerView, the
@@ -124,6 +126,9 @@ struct PagingCanvas: View {
     let pages: [[Tile]]
     let metrics: GridMetrics
     let vertical: Bool
+    /// A plain value handed down from PagerView. The canvas does NOT observe
+    /// settings or the offset; only PageSlot reads the offset.
+    let glass: FolderIconGlass
 
     private var extent: CGFloat { vertical ? size.height : size.width }
 
@@ -135,6 +140,9 @@ struct PagingCanvas: View {
                          span: extent,
                          size: size,
                          vertical: vertical,
+                         folderFrames: Self.folderFrames(in: pages[page],
+                                                         metrics: metrics),
+                         glass: glass,
                          content: GridPage(page: page,
                                            tiles: pages[page],
                                            metrics: metrics))
@@ -142,6 +150,22 @@ struct PagingCanvas: View {
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
+
+    /// Reuses GridMetrics' one coordinate system — never re-derives cell
+    /// arithmetic here (the merge bug was exactly that mistake).
+    private static func folderFrames(in tiles: [Tile],
+                                     metrics: GridMetrics) -> [FolderIconFrame] {
+        tiles.enumerated().compactMap { index, tile in
+            guard tile.isFolder else { return nil }
+            return FolderIconFrame(id: tile.id,
+                                   center: metrics.iconCenter(of: index))
+        }
+    }
+}
+
+struct FolderIconFrame: Identifiable {
+    let id: String
+    let center: CGPoint
 }
 
 /// Single-purpose leaf: read the offset, translate the page, nothing else.
@@ -161,16 +185,37 @@ struct PageSlot<Content: View>: View {
     let span: CGFloat
     let size: CGSize
     let vertical: Bool
+    let folderFrames: [FolderIconFrame]
+    let glass: FolderIconGlass
     let content: Content
 
     var body: some View {
         let pos = scroll.position
         let distance = span > 1 ? abs(CGFloat(page) * span - pos) / span : 0
+        let plated = glass.enabled && ProbeConfig.folderIconPlate && !ProbeConfig.noRaster
         Group {
             if ProbeConfig.noRaster {
-                content
+                content.environment(\.folderGlassPlateProvided, false)
             } else {
-                content.drawingGroup()
+                content.environment(\.folderGlassPlateProvided, plated).drawingGroup()
+            }
+        }
+        // Real glass must sit OUTSIDE the raster: `glassEffect` inside
+        // drawingGroup() produces zero CABackdropLayer / SDFPortalLayer. The
+        // background modifier is applied after drawingGroup(), so these plates
+        // keep the cached page layer intact while still sampling the wallpaper.
+        // They carry no offset subscription — the whole group is translated by
+        // the single .offset below, exactly as before.
+        .background {
+            if plated {
+                ZStack(alignment: .topLeading) {
+                    ForEach(folderFrames) { frame in
+                        FolderIconGlassSurface(glass: glass)
+                            .position(frame.center)
+                    }
+                }
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .allowsHitTesting(false)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -191,6 +236,8 @@ struct DraggedTileVisual: View {
 
     var body: some View {
         VStack(spacing: 7) {
+            // Outside a page, FolderIconView sees plateProvided == false and
+            // draws its own standalone glass plate. No extra layer here.
             TileIcon(tile: tile, size: size)
             Text(title)
                 .font(.system(size: 12, weight: .medium))

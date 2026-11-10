@@ -52,6 +52,11 @@ LAUNCHOS_FORCE_INSTALL=1 ./Scripts/install.sh # 即使版本相同也强制替�
   面板本体在 macOS 26+ 使用系统液态玻璃（旧系统退回半透明材质），与搜索玻璃**分开调节**：
   开关、风格、着色（0–75%）、圆角（8–36pt）、背板压暗（0–60%）都在「设置 ▸ 外观」，
   关掉后回到原来的近黑实底，白字仍可读。
+  **网格里那个缩小的文件夹图标共用同一组参数、同步变化**（圆角按比例缩放到图标尺寸、
+  背板压暗映射成图标内层暗度，保证缩略 App 图标可读）；设置页预览同时展示两处。
+  真实玻璃画在页的 `background`（`drawingGroup()` 之外）：`glassEffect` 若放进光栅化页里
+  会被完全扁平掉（实测 `CABackdropLayer=0`），而关掉光栅化又会让翻页 jank 从 1.8% 涨到 4.8%。
+  页外的场景（拖拽视觉、隐藏 App、设置里的图标预览）由图标自己画同样的玻璃。
 - **自然滚动翻页**：触控板双指左右滑、鼠标滚轮都可翻页，带橡皮筋与回弹吸附。
 - **拖到屏幕边缘翻页**：拖动图标停在左右边缘 0.4 秒自动翻到相邻页。
 - **键盘**：方向键在网格中定位，Return / 空格打开；Home/End、PageUp/PageDown、
@@ -154,6 +159,14 @@ open build/Gridora.app --args --panel-visibility-probe  # 量设置面板/顶栏
 `CABackdropLayer` / `SDFPortalLayer` 计数差、开与关各 1 秒的帧采样、参数透传与关闭路径。
 只有玻璃层数量真实下降才算 PASS，避免「写了布尔值却没换材质」的假阳性。
 
+`--folder-icon-glass-probe` 保持**网格可见**（不打开文件夹、不进搜索），A/B 切换同一个开关：
+输出 `/tmp/launchos-folder-icon-glass.log`，含页背景玻璃层的
+`CABackdropLayer` / `SDFPortalLayer` 计数差、开与关各 1 秒帧采样、圆角映射与参数透传。
+实测玻璃开 `backdrop 9 / portal 18`、关 `0 / 0`，两版静止 p95 都是 6.50ms；
+`LAUNCHOS_FOLDER_ICON_NOPLATE=1` 是单变量对照／回退开关（关掉后玻璃层归零，探针按设计 FAIL），
+`LAUNCHOS_FOLDER_ICON_NOGLASS=1` 则让小图标整体回到原材质。4 轮交替翻页 A/B：
+玻璃开 1.80% / 6.50ms，关 2.00% / 6.51ms，无渲染回归。
+
 ## 布局同步（iCloud Drive）
 
 设置 → 同步 → 「同步图标摆放位置」。默认在
@@ -239,6 +252,9 @@ C 滑块范围与界面文案一致、D Reduce Motion 降级、E 焦点圈与浮
 G 组固定文件夹玻璃的 5 个独立参数：快照随每个值变化、与搜索参数互不串扰、默认圆角等于
 `DesignTokens.panelRadius`，并用真实 JSON 往返验证持久化、越界 clamp、损坏枚举回落和
 老 state 缺键时的默认升级。
+H 组固定「缩小版文件夹图标」：与大面板五个参数逐项相同、默认圆角仍等于原图标的
+`size × 0.235`、圆角缩放有上下界且单调、尺寸只影响几何、搜索参数不能牵动两处文件夹表面、
+`LAUNCHOS_FOLDER_ICON_NOGLASS` 回退开关被遵守。
 
 `Views/DesignTokens.swift` 是颜色／圆角／字号／发丝线的唯一真源：主界面近黑冷调
 `#0B0D11` ＋唯一信号橙 `#FF5C35`（约 10%），设置页白底＋系统蓝是既定例外。

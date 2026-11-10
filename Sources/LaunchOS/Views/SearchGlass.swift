@@ -133,3 +133,101 @@ struct FolderGlassPanel: ViewModifier {
         }
     }
 }
+
+// MARK: - Collapsed folder icon in the grid
+
+struct FolderGlassPlateProvidedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True only inside a PageSlot that already drew the glass plates in its
+    /// background (outside the raster). Everywhere else — drag visual, hidden
+    /// apps sheet, settings tile previews — the collapsed folder icon draws
+    /// its own standalone glass so it never turns into a transparent hole.
+    var folderGlassPlateProvided: Bool {
+        get { self[FolderGlassPlateProvidedKey.self] }
+        set { self[FolderGlassPlateProvidedKey.self] = newValue }
+    }
+}
+
+/// The small folder tile shares the exact same five `folderGlass*` values as
+/// the open-folder panel, so one slider moves both surfaces. It is rendered
+/// inside `PageSlot.drawingGroup()` (the rasterised paging path), therefore the
+/// mapping is a pure value: no observation, no `.interactive()` glass, and no
+/// backdrop sampling of the whole screen. `LAUNCHOS_FOLDER_ICON_NOGLASS=1` is
+/// the rollback switch used by the measured A/B.
+struct FolderIconGlass: Equatable {
+    let enabled: Bool
+    let style: SearchGlassStyle
+    let tint: Double
+    let tintPercent: Int
+    let radius: Int
+    let scrimPercent: Int
+    let cornerRadius: CGFloat
+    let innerDim: Double
+    let size: CGFloat
+
+    init(settings: Settings, size: CGFloat) {
+        self.size = size
+        // A standalone glassEffect inside the rasterised page is both invisible
+        // and expensive (measured 9.75% jank / 17.98ms p95). With plates
+        // disabled the icon therefore goes straight back to its old material
+        // instead of attempting glass in the wrong place.
+        enabled = settings.folderGlassEnabled
+            && !ProbeConfig.folderIconNoGlass
+            && (ProbeConfig.folderIconPlate || ProbeConfig.noRaster)
+        style = settings.folderGlassStyle
+        tint = settings.folderGlassTint
+        tintPercent = Int((settings.folderGlassTint * 100).rounded())
+        radius = Int(settings.folderGlassRadius.rounded())
+        scrimPercent = Int((settings.folderGlassScrim * 100).rounded())
+        // The 8–36pt panel radius describes a ~600pt surface; scale it onto a
+        // ~80pt icon and clamp so the tile never becomes a circle or a square.
+        // The default value reproduces the original 0.235 ratio exactly.
+        let base = size * 0.235
+        let factor = CGFloat(settings.folderGlassRadius
+                             / Settings.defaultFolderGlassRadius)
+        cornerRadius = min(max(base * factor, size * 0.10), size * 0.42)
+        // The panel's "背板压暗" becomes the icon's inner dimming, so the same
+        // slider still does something visible on a surface with no backdrop.
+        innerDim = settings.folderGlassScrim * 0.5
+    }
+
+    var modeText: String { enabled ? "液态玻璃" : "原材质" }
+
+    var readout: String {
+        "\(style.label) · 着色 \(tintPercent)% · 圆角 \(radius)pt"
+            + " · 压暗 \(scrimPercent)% · 图标圆角 \(Int(cornerRadius.rounded()))pt"
+    }
+}
+
+/// Glass backing for the collapsed folder icon. Non-interactive glass is
+/// deliberate: an `.interactive()` layer per folder tile would put a
+/// hover-reactive backdrop into every rasterised page.
+struct FolderIconGlassSurface: View {
+    let glass: FolderIconGlass
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: glass.cornerRadius,
+                                     style: .continuous)
+        ZStack {
+            if #available(macOS 26.0, *) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.001))
+                    .glassEffect(SearchGlass.configuration(style: glass.style,
+                                                           tint: glass.tint,
+                                                           interactive: false),
+                                 in: shape)
+            } else {
+                // Older systems: a readable material instead of an empty tile.
+                shape.fill(.ultraThinMaterial)
+            }
+            shape.fill(Color.black.opacity(glass.innerDim))
+            shape.stroke(.white.opacity(0.20), lineWidth: 0.8)
+        }
+        .clipShape(shape)
+        .frame(width: glass.size, height: glass.size)
+        .allowsHitTesting(false)
+    }
+}

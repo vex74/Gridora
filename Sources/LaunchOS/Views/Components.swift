@@ -95,6 +95,7 @@ struct AppIconImage: View {
 
 struct FolderIconView: View {
     @EnvironmentObject var model: LauncherModel
+    @Environment(\.folderGlassPlateProvided) private var plateProvided
     let folder: Folder
     var size: CGFloat
 
@@ -102,24 +103,28 @@ struct FolderIconView: View {
         folder.bundleIDs.prefix(9).compactMap { model.appsByID[$0] }
     }
 
+    /// Same five settings as the open-folder panel. This is a value, not an
+    /// extra subscription: the grid is rendered inside a rasterised page and
+    /// must not gain per-frame observers.
+    private var glass: FolderIconGlass {
+        FolderIconGlass(settings: model.settings, size: size)
+    }
+
     var body: some View {
-        let radius = size * 0.235
         ZStack {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(.white.opacity(0.13))
-                .background(
-                    .ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(LinearGradient(colors: [.white.opacity(0.06), .clear],
-                                             startPoint: .top, endPoint: .bottom))
+            if glass.enabled {
+                // Inside a page, the real glass is drawn by the page's
+                // background (outside drawingGroup); painting a backing here
+                // would cover it. Outside a page (drag visual, hidden apps,
+                // settings previews), the icon draws its own glass plate.
+                if plateProvided {
+                    EmptyView()
+                } else {
+                    FolderIconGlassSurface(glass: glass)
                 }
-                .overlay {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .stroke(.white.opacity(0.18), lineWidth: 0.8)
-                }
+            } else {
+                legacyBacking(radius: size * 0.235)
+            }
 
             // Larger previews: the old 0.24 squares inside 0.10 padding made
             // a folder read as noticeably smaller than a normal app icon.
@@ -138,6 +143,22 @@ struct FolderIconView: View {
         }
         .frame(width: size, height: size)
         .shadow(color: .black.opacity(0.35), radius: size * 0.10, x: 0, y: size * 0.05)
+    }
+
+    /// The original near-black tile, kept byte-for-byte for the disabled /
+    /// rollback path so turning glass off never changes anything else.
+    private func legacyBacking(radius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return shape
+            .fill(.white.opacity(0.13))
+            .background(.ultraThinMaterial, in: shape)
+            .overlay {
+                shape.fill(LinearGradient(colors: [.white.opacity(0.06), .clear],
+                                          startPoint: .top, endPoint: .bottom))
+            }
+            .overlay {
+                shape.stroke(.white.opacity(0.18), lineWidth: 0.8)
+            }
     }
 }
 
