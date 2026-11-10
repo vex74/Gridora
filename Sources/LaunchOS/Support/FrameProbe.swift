@@ -50,6 +50,12 @@ enum ProbeConfig {
     /// Default is 2 pt/frame, the speed of a real 120 Hz mouse move.
     static let dragFast =
         ProcessInfo.processInfo.environment["LAUNCHOS_DRAG_FAST"] == "1"
+    /// `LAUNCHOS_FOLDER_FPS=1` opens a multi-page folder and turns its pages
+    /// instead of the main pager. v1.5 slides folder pages, which renders up
+    /// to three 3 × 3 pages at once — a cost that must be measured, not
+    /// assumed.
+    static let folderFPS =
+        ProcessInfo.processInfo.environment["LAUNCHOS_FOLDER_FPS"] == "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")
@@ -166,6 +172,7 @@ final class FrameProbe {
                 + " flat=\(ProbeConfig.flatBackdrop ? 1 : 0)"
                 + " noRaster=\(ProbeConfig.noRaster ? 1 : 0)"
                 + " dragFPS=\(ProbeConfig.dragFPS ? 1 : 0)"
+                + " folderFPS=\(ProbeConfig.folderFPS ? 1 : 0)"
                 + " liveReflow=\(ProbeConfig.liveReflow ? 1 : 0)",
             "nominal=\(hz)Hz jankBudget=\(budget)ms"
         ]
