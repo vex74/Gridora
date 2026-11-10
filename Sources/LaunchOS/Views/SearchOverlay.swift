@@ -37,7 +37,7 @@ struct SearchOverlay: View {
                     .onTapGesture { model.closeSearch() }
                     .accessibilityHidden(true)
 
-                if model.settings.searchGlassEnabled {
+                if model.settings.glassEnabled {
                     SearchGlassScrim(settings: model.settings)
                 }
 
@@ -61,9 +61,9 @@ struct SearchOverlay: View {
     /// Glass tints the backdrop by itself, so the opaque scrim is thinned
     /// while glass is on. Both paths read the same slider as the only source.
     private var baseScrim: Double {
-        model.settings.searchGlassEnabled
-            ? model.settings.searchScrim * 0.45
-            : model.settings.searchScrim
+        model.settings.glassEnabled
+            ? model.settings.glassScrim * 0.45
+            : model.settings.glassScrim
     }
 
     private func availableHeight(_ total: CGFloat) -> CGFloat {
@@ -129,7 +129,7 @@ struct SearchOverlay: View {
         .frame(width: 460, height: 42)
         .modifier(SearchGlassPanel(settings: model.settings, fallback: .solidField))
         .overlay {
-            RoundedRectangle(cornerRadius: CGFloat(model.settings.searchGlassRadius),
+            RoundedRectangle(cornerRadius: SearchGlass.fieldRadius(model.settings.glassRadius),
                              style: .continuous)
                 .stroke(editing ? accent.opacity(0.85) : .white.opacity(0.18), lineWidth: 1)
         }
