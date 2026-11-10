@@ -23,6 +23,9 @@ struct FolderOverlay: View {
     /// damage the rasterised page cache behind the panel.
     @State private var gridFrame: CGRect = .zero
     @State private var appeared = false
+    /// Only the folder name itself turns into a rename target, so it needs a
+    /// hover cue — otherwise nothing on screen says "click me".
+    @State private var titleHover = false
     @FocusState private var nameFocused: Bool
 
     private var apps: [AppInfo] {
@@ -244,52 +247,87 @@ struct FolderOverlay: View {
 
     // MARK: - Header
 
+    /// macOS 15 keeps only two things up here: a close button and the folder
+    /// name. No app count, no pencil — the name itself is the rename control
+    /// (one click, not double click). The title sits in its own layer so it
+    /// stays optically centred whether or not the right corner is occupied by
+    /// the "完成" button during a rename.
     private var header: some View {
-        HStack(spacing: 12) {
-            GlassIconButton(systemName: "xmark") { close() }
+        ZStack {
+            nameTitle
 
-            Spacer(minLength: 8)
+            HStack(spacing: 12) {
+                GlassIconButton(systemName: "xmark") { close() }
 
-            if isRenaming {
-                TextField("文件夹名称", text: $nameDraft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .focused($nameFocused)
-                    .frame(maxWidth: 300)
-                    .onSubmit { commitRename() }
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            nameFocused = true
-                        }
-                    }
-            } else {
-                Text(folder.name)
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .lineLimit(1)
-                    .onTapGesture(count: 2) { beginRename() }
-            }
+                // Explicitly inert and explicitly non-hit-testing: a Spacer is
+                // usually transparent to clicks but this keeps the rename tap
+                // working no matter how SwiftUI resolves the ZStack order.
+                // Fixed height on purpose — a flexible-height filler would let
+                // the ZStack grow the header and stretch the whole panel.
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+                    .allowsHitTesting(false)
 
-            Text("\(apps.count) 个 App")
-                .font(.system(size: 10.5).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.35))
-
-            Spacer(minLength: 8)
-
-            if isRenaming {
-                Button("完成") { commitRename() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 40, height: 30)
-            } else {
-                GlassIconButton(systemName: "pencil", help: "重命名") { beginRename() }
+                if isRenaming {
+                    Button("完成") { commitRename() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 40, height: 30)
+                        .contentShape(Rectangle())
+                } else {
+                    // Same footprint as the close button. Without it the title
+                    // drifts right by half a button; with it the folder name
+                    // is dead centre exactly like macOS 15.
+                    Color.clear
+                        .frame(width: 30, height: 30)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
+    }
+
+    @ViewBuilder
+    private var nameTitle: some View {
+        if isRenaming {
+            TextField("文件夹名称", text: $nameDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .focused($nameFocused)
+                .frame(maxWidth: 300)
+                .onSubmit { commitRename() }
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        nameFocused = true
+                    }
+                }
+        } else {
+            Text(folder.name)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(.white.opacity(titleHover ? 1 : 0.95))
+                .lineLimit(1)
+                // Never let a long name run under the close / done buttons.
+                .frame(maxWidth: panelWidth - 140)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.white.opacity(titleHover ? 0.09 : 0))
+                )
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if titleHover != hovering { titleHover = hovering }
+                }
+                .onTapGesture { beginRename() }
+                .help("点击重命名文件夹")
+                .animation(Motion.quick, value: titleHover)
+        }
     }
 
     /// Launchpad grows a folder out of the tile that was clicked. The pager
