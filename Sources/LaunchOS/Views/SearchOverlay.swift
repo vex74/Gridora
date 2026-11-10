@@ -29,17 +29,13 @@ struct SearchOverlay: View {
     var body: some View {
         GeometryReader { window in
             ZStack(alignment: .top) {
-                // The click-catching scrim stays a plain colour so a tap on
-                // empty space always closes search. Glass is layered above it
-                // with hit testing disabled.
-                Color.black.opacity(baseScrim)
-                    .ignoresSafeArea()
-                    .onTapGesture { model.closeSearch() }
-                    .accessibilityHidden(true)
-
-                if model.settings.glassEnabled {
-                    SearchGlassScrim(settings: model.settings)
-                }
+                // The same fog as the open-folder backdrop and the menu-bar
+                // cover window. Glass sits above the click-catching scrim and
+                // is hit-test inert, so empty space still closes search.
+                BackdropFogSurface(
+                    fog: BackdropFog.make(settings: model.settings,
+                                          state: .search),
+                    onClose: { model.closeSearch() })
 
                 VStack(spacing: 0) {
                     searchField
@@ -56,14 +52,6 @@ struct SearchOverlay: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-    }
-
-    /// Glass tints the backdrop by itself, so the opaque scrim is thinned
-    /// while glass is on. Both paths read the same slider as the only source.
-    private var baseScrim: Double {
-        model.settings.glassEnabled
-            ? model.settings.glassScrim * 0.45
-            : model.settings.glassScrim
     }
 
     private func availableHeight(_ total: CGFloat) -> CGFloat {
