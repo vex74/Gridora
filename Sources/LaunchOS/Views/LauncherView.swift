@@ -237,20 +237,41 @@ struct EmptyGridMessage: View {
 /// pixel for pixel; clipping a short strip would rescale the wallpaper.
 struct MenuBarCover: View {
     @EnvironmentObject var model: LauncherModel
+    /// The cover is a separate NSWindow, so folder drag state has to be
+    /// injected separately: `outsidePanel` thins the fog in BOTH windows.
+    @EnvironmentObject var folderDragInfo: FolderDragInfo
+
+    /// One value, shared with FolderOverlay / SearchOverlay. Without it the
+    /// top strip keeps the clean wallpaper blur while the rest of the screen
+    /// gets glass + scrim — the seam macOS 15 does not have.
+    private var fog: BackdropFog {
+        let state = BackdropFog.state(openFolderID: model.openFolderID,
+                                      searchOpen: model.searchOpen,
+                                      outsidePanel: folderDragInfo.outsidePanel)
+        return BackdropFog.make(settings: model.settings, state: state)
+    }
 
     var body: some View {
-        BackgroundView(useWallpaper: model.settings.useWallpaper,
-                       wallpaper: model.wallpaper,
-                       blur: model.quantizedBackdropBlur,
-                       dim: model.quantizedBackdropDim,
-                       animate: false)
-            .mask(alignment: .top) {
-                VStack(spacing: 0) {
-                    Color.black.frame(height: model.menuBarHeight)
-                    Color.clear
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            BackgroundView(useWallpaper: model.settings.useWallpaper,
+                           wallpaper: model.wallpaper,
+                           blur: model.quantizedBackdropBlur,
+                           dim: model.quantizedBackdropDim,
+                           animate: false)
+
+            // Clipped by the same mask as the backdrop: the fog must never
+            // spill below the menu-bar strip and cover the main window.
+            if fog.visibleOnCover {
+                BackdropFogSurface(fog: fog)
             }
-            .ignoresSafeArea()
+        }
+        .mask(alignment: .top) {
+            VStack(spacing: 0) {
+                Color.black.frame(height: model.menuBarHeight)
+                Color.clear
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .ignoresSafeArea()
     }
 }
