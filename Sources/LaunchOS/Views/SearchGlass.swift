@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Single source of truth that maps the five `Settings` values onto real
+/// Single source of truth that maps the one global glass group onto real
 /// Liquid Glass inputs. The deployment target is macOS 14, so every macOS 26
 /// symbol lives behind an availability check and older systems get a material
 /// + dark tint instead of an empty / unreadable surface.
@@ -9,6 +9,15 @@ enum SearchGlass {
     static var isAvailable: Bool {
         if #available(macOS 26.0, *) { return true }
         return false
+    }
+
+    /// The search field and results panel derive their corner radius from the
+    /// single global `glassRadius` — the one number that describes the largest
+    /// surface (the folder panel). 58% of it, clamped to 8…20 pt, so the
+    /// default 24 pt panel radius yields the 14 pt the field has always had.
+    /// One slider, consistent rounding on every surface, no second knob.
+    static func fieldRadius(_ panelRadius: Double) -> CGFloat {
+        min(max(CGFloat(panelRadius) * 0.58, 8), 20)
     }
 
     @available(macOS 26.0, *)
@@ -34,11 +43,11 @@ struct SearchGlassPanel: ViewModifier {
     var fallback: SearchGlassFallback = .noPanel
 
     func body(content: Content) -> some View {
-        let radius = CGFloat(settings.searchGlassRadius)
-        if #available(macOS 26.0, *), settings.searchGlassEnabled {
+        let radius = SearchGlass.fieldRadius(settings.glassRadius)
+        if #available(macOS 26.0, *), settings.glassEnabled {
             content.glassEffect(
-                SearchGlass.configuration(style: settings.searchGlassStyle,
-                                          tint: settings.searchGlassTint,
+                SearchGlass.configuration(style: settings.glassStyle,
+                                          tint: settings.glassTint,
                                           interactive: true),
                 in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         } else {
@@ -51,12 +60,12 @@ struct SearchGlassPanel: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         if fallback == .solidField {
             shape.fill(DesignTokens.panelSurface.opacity(0.94))
-        } else if settings.searchGlassEnabled {
+        } else if settings.glassEnabled {
             // Glass requested but the OS cannot provide it: keep a readable
             // material panel rather than silently dropping the feature.
             ZStack {
                 shape.fill(.ultraThinMaterial)
-                shape.fill(Color.black.opacity(0.35 + settings.searchGlassTint * 0.5))
+                shape.fill(Color.black.opacity(0.35 + settings.glassTint * 0.5))
             }
         }
     }
@@ -74,7 +83,7 @@ struct SearchGlassScrim: View {
                 Rectangle()
                     .fill(Color.black.opacity(0.001))
                     .glassEffect(SearchGlass.configuration(style: .clear,
-                                                          tint: settings.searchScrim,
+                                                          tint: settings.glassScrim,
                                                           interactive: false),
                                  in: Rectangle())
             } else {
@@ -88,9 +97,9 @@ struct SearchGlassScrim: View {
 }
 
 /// The open-folder panel. It renders through the very same
-/// `SearchGlass.configuration` as the search surfaces — one mapping from
-/// Settings to system glass — but reads its own five values so a user can
-/// tune the large folder panel independently of the small search field.
+/// `SearchGlass.configuration` as the search surfaces and, since v1.5, reads
+/// the very same five global glass values — one parameter set for every glass
+/// surface in the app.
 ///
 /// Three explicit states, all testable:
 /// • macOS 26+ and enabled → real `glassEffect` (CABackdropLayer).
@@ -104,12 +113,12 @@ struct FolderGlassPanel: ViewModifier {
     let settings: Settings
 
     func body(content: Content) -> some View {
-        let radius = CGFloat(settings.folderGlassRadius)
-        if #available(macOS 26.0, *), settings.folderGlassEnabled {
+        let radius = CGFloat(settings.glassRadius)
+        if #available(macOS 26.0, *), settings.glassEnabled {
             let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
             content
-                .glassEffect(SearchGlass.configuration(style: settings.folderGlassStyle,
-                                                       tint: settings.folderGlassTint,
+                .glassEffect(SearchGlass.configuration(style: settings.glassStyle,
+                                                       tint: settings.glassTint,
                                                        interactive: true),
                              in: shape)
                 .overlay { shape.stroke(.white.opacity(0.16), lineWidth: 0.8) }
@@ -122,10 +131,10 @@ struct FolderGlassPanel: ViewModifier {
     @ViewBuilder
     private func fallbackSurface(radius: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        if settings.folderGlassEnabled {
+        if settings.glassEnabled {
             ZStack {
                 shape.fill(.ultraThinMaterial)
-                shape.fill(Color.black.opacity(0.35 + settings.folderGlassTint * 0.5))
+                shape.fill(Color.black.opacity(0.35 + settings.glassTint * 0.5))
             }
             .overlay { shape.stroke(.white.opacity(0.16), lineWidth: 0.8) }
         } else {
@@ -151,12 +160,13 @@ extension EnvironmentValues {
     }
 }
 
-/// The small folder tile shares the exact same five `folderGlass*` values as
-/// the open-folder panel, so one slider moves both surfaces. It is rendered
-/// inside `PageSlot.drawingGroup()` (the rasterised paging path), therefore the
-/// mapping is a pure value: no observation, no `.interactive()` glass, and no
-/// backdrop sampling of the whole screen. `LAUNCHOS_FOLDER_ICON_NOGLASS=1` is
-/// the rollback switch used by the measured A/B.
+/// The small folder tile shares the exact same five global `glass*` values as
+/// the open-folder panel and the search surfaces, so one slider moves every
+/// glass surface. It is rendered inside `PageSlot.drawingGroup()` (the
+/// rasterised paging path), therefore the mapping is a pure value: no
+/// observation, no `.interactive()` glass, and no backdrop sampling of the
+/// whole screen. `LAUNCHOS_FOLDER_ICON_NOGLASS=1` is the rollback switch used
+/// by the measured A/B.
 struct FolderIconGlass: Equatable {
     let enabled: Bool
     let style: SearchGlassStyle
@@ -174,24 +184,23 @@ struct FolderIconGlass: Equatable {
         // and expensive (measured 9.75% jank / 17.98ms p95). With plates
         // disabled the icon therefore goes straight back to its old material
         // instead of attempting glass in the wrong place.
-        enabled = settings.folderGlassEnabled
+        enabled = settings.glassEnabled
             && !ProbeConfig.folderIconNoGlass
             && (ProbeConfig.folderIconPlate || ProbeConfig.noRaster)
-        style = settings.folderGlassStyle
-        tint = settings.folderGlassTint
-        tintPercent = Int((settings.folderGlassTint * 100).rounded())
-        radius = Int(settings.folderGlassRadius.rounded())
-        scrimPercent = Int((settings.folderGlassScrim * 100).rounded())
-        // The 8–36pt panel radius describes a ~600pt surface; scale it onto a
+        style = settings.glassStyle
+        tint = settings.glassTint
+        tintPercent = Int((settings.glassTint * 100).rounded())
+        radius = Int(settings.glassRadius.rounded())
+        scrimPercent = Int((settings.glassScrim * 100).rounded())
+        // The 6–36pt panel radius describes a ~600pt surface; scale it onto a
         // ~80pt icon and clamp so the tile never becomes a circle or a square.
         // The default value reproduces the original 0.235 ratio exactly.
         let base = size * 0.235
-        let factor = CGFloat(settings.folderGlassRadius
-                             / Settings.defaultFolderGlassRadius)
+        let factor = CGFloat(settings.glassRadius / Settings.defaultGlassRadius)
         cornerRadius = min(max(base * factor, size * 0.10), size * 0.42)
-        // The panel's "背板压暗" becomes the icon's inner dimming, so the same
+        // The shared "背板压暗" becomes the icon's inner dimming, so the same
         // slider still does something visible on a surface with no backdrop.
-        innerDim = settings.folderGlassScrim * 0.5
+        innerDim = settings.glassScrim * 0.5
     }
 
     var modeText: String { enabled ? "液态玻璃" : "原材质" }
