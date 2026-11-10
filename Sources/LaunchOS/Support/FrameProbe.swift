@@ -11,6 +11,11 @@ import QuartzCore
 ///   LAUNCHOS_FLAT_BACKDROP=1  replace the whole backdrop with a flat color
 ///   LAUNCHOS_NO_RASTER=1      disable page rasterisation (interaction
 ///                             rollback switch; expect ~12% paging jank)
+///   LAUNCHOS_NO_LIVE_REFLOW=1 disable the drag-time make-way preview
+///                             (single-variable A/B / rollback switch)
+///   LAUNCHOS_DRAG_FPS=1       synthesise a 120 Hz pointer stream instead of
+///                             page turns, so the make-way preview can be
+///                             measured against the no-reflow control
 ///
 /// Typical run:
 ///   LaunchOS --fps-probe
@@ -31,6 +36,20 @@ enum ProbeConfig {
     /// raster, and this env is the single-variable A/B / rollback switch.
     static let folderIconPlate =
         ProcessInfo.processInfo.environment["LAUNCHOS_FOLDER_ICON_NOPLATE"] != "1"
+    /// macOS 15 reflows the other icons around a dragged tile while the
+    /// pointer is over a gap, but freezes them when the artwork sits on a
+    /// merge target. Only the low-frequency insertion slot is published, so
+    /// this stays outside the 120 Hz pointer stream. Kept as a one-variable
+    /// rollback because it invalidates a rasterised page on every cell crossing.
+    static let liveReflow =
+        ProcessInfo.processInfo.environment["LAUNCHOS_NO_LIVE_REFLOW"] != "1"
+    static let dragFPS =
+        ProcessInfo.processInfo.environment["LAUNCHOS_DRAG_FPS"] == "1"
+    /// `LAUNCHOS_DRAG_FAST=1` exaggerates the pointer speed so one cell is
+    /// crossed every frame — a worst-case stress test, not a realistic drag.
+    /// Default is 2 pt/frame, the speed of a real 120 Hz mouse move.
+    static let dragFast =
+        ProcessInfo.processInfo.environment["LAUNCHOS_DRAG_FAST"] == "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")
@@ -60,10 +79,18 @@ final class FrameProbe {
     private var inPaging = false
     private var idleSamples: [Double] = []      // milliseconds
     private var pagingSamples: [Double] = []
+    private var onFrame: ((Int) -> Void)?
+    private var frameIndex = 0
 
-    /// `drive` is called five times to produce real page transitions.
-    func start(view: NSView, drive: @escaping () -> Void) {
+    /// `drive` is called five times to produce real page transitions. With
+    /// `onFrame` the measurement window instead replays a pointer stream once
+    /// per display frame, which is the only way to measure a drag-time
+    /// reflow against the same binary with the reflow switched off.
+    func start(view: NSView,
+               drive: @escaping () -> Void,
+               onFrame: ((Int) -> Void)? = nil) {
         guard ProbeConfig.enabled else { return }
+        self.onFrame = onFrame
 
         let displayLink = view.displayLink(target: ticker,
                                            selector: #selector(ProbeTicker.tick(_:)))
@@ -100,7 +127,13 @@ final class FrameProbe {
         previous = timestamp
         // Ignore suspend / debugger stalls; those are not render jank.
         guard dt > 0.5, dt < 250 else { return }
-        if inPaging { pagingSamples.append(dt) } else { idleSamples.append(dt) }
+        if inPaging {
+            pagingSamples.append(dt)
+            frameIndex += 1
+            onFrame?(frameIndex)
+        } else {
+            idleSamples.append(dt)
+        }
     }
 
     private func after(_ delay: TimeInterval, _ block: @escaping () -> Void) {
@@ -131,7 +164,9 @@ final class FrameProbe {
         var out = [
             "mode=\(mode) noDrift=\(ProbeConfig.noDrift ? 1 : 0)"
                 + " flat=\(ProbeConfig.flatBackdrop ? 1 : 0)"
-                + " noRaster=\(ProbeConfig.noRaster ? 1 : 0)",
+                + " noRaster=\(ProbeConfig.noRaster ? 1 : 0)"
+                + " dragFPS=\(ProbeConfig.dragFPS ? 1 : 0)"
+                + " liveReflow=\(ProbeConfig.liveReflow ? 1 : 0)",
             "nominal=\(hz)Hz jankBudget=\(budget)ms"
         ]
         out.append(summary("idle  ", idleSamples, budget: budget))
