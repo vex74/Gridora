@@ -141,6 +141,24 @@ struct TileView: View {
 
         Divider()
 
+        if let app {
+            // macOS 15 has no context-menu way into a folder; this is the
+            // explicit alternative for anyone who finds drag-merge fiddly.
+            Menu("移动到文件夹") {
+                ForEach(model.allFolders) { folder in
+                    Button {
+                        model.moveAppIntoFolder(appID: app.bundleID, folderID: folder.id)
+                    } label: {
+                        Text("\(folder.name) · \(folder.bundleIDs.count) 个 App")
+                    }
+                }
+                if model.allFolders.isEmpty {
+                    Text("暂无文件夹 · 把两个图标拖到一起即可创建")
+                }
+            }
+            Divider()
+        }
+
         Button("移到上一页") {
             model.moveTile(tileID: tile.id, toPage: page - 1)
         }

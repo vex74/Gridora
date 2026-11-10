@@ -101,6 +101,10 @@ final class LauncherModel: ObservableObject {
     @Published var hiddenOpen = false
     @Published var openFolderID: String?
     @Published var renamingFolderID: String?
+    /// Pager-container point of the folder icon that opened the panel. Plain
+    /// property (not @Published): FolderOverlay reads it once on appearance to
+    /// grow the panel out of that tile, like macOS 15 Launchpad.
+    var folderOpenOrigin: CGPoint?
 
     @Published var toast: String?
 
@@ -711,7 +715,7 @@ final class LauncherModel: ObservableObject {
             return
         }
         selection = idx
-        activate(tiles[idx])
+        activate(tiles[idx], origin: point)
     }
 
     /// Trace merge resolution while dragging; helps diagnose real-hand drags.
@@ -874,13 +878,13 @@ final class LauncherModel: ObservableObject {
         syncDragSemantics()
     }
 
-    /// Grid cell of a point, clamped into the layout.
+    /// Grid cell of a point, clamped into the layout. `GridMetrics.index(at:)`
+    /// is the single source of truth: it subtracts the four per-edge insets
+    /// before dividing by the cell size. Re-implementing the arithmetic here
+    /// without those insets shifted every merge probe by a column/row on any
+    /// layout with non-zero margins, which made folder creation impossible.
     private func probeCell(_ point: CGPoint) -> Int {
-        let col = Int(floor(point.x / max(metrics.cellW, 1)))
-        let row = Int(floor(point.y / max(metrics.cellH, 1)))
-        let c = min(max(col, 0), max(metrics.cols - 1, 0))
-        let r = min(max(row, 0), max(metrics.rows - 1, 0))
-        return r * metrics.cols + c
+        metrics.index(at: point)
     }
 
     /// Merge candidate from the drag-start snapshot: the tile this cell held
@@ -1005,9 +1009,12 @@ final class LauncherModel: ObservableObject {
         }
 
         withAnimation(Motion.reorder) { pages[sourcePage] = array }
-        flashID = targetID
+        // A merge onto a plain app replaces that tile with a brand-new folder
+        // id. Flashing the old app id therefore highlighted nothing.
+        let folderID = array[targetIndex].id
+        flashID = folderID
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            if self?.flashID == targetID { self?.flashID = nil }
+            if self?.flashID == folderID { self?.flashID = nil }
         }
     }
 
@@ -1022,8 +1029,9 @@ final class LauncherModel: ObservableObject {
 
     // MARK: - Launch
 
-    func activate(_ tile: Tile) {
+    func activate(_ tile: Tile, origin: CGPoint? = nil) {
         if let folder = tile.folder {
+            folderOpenOrigin = origin
             openFolderID = folder.id
             searchOpen = false
             selection = nil
@@ -1391,7 +1399,8 @@ final class LauncherModel: ObservableObject {
         guard pages.indices.contains(page), !pages[page].isEmpty else { return false }
         let index = min(max(selection ?? 0, 0), pages[page].count - 1)
         selection = index
-        activate(pages[page][index])
+        let origin = containerPoint(metrics.iconCenter(of: index), page: page)
+        activate(pages[page][index], origin: origin)
         return true
     }
 
@@ -1535,6 +1544,77 @@ final class LauncherModel: ObservableObject {
     }
 
     // MARK: - Folder editing
+
+    /// Every folder on every page, in grid order. Drives the "移动到文件夹"
+    /// context menus; `Folder` is already Identifiable.
+    var allFolders: [Folder] {
+        pages.flatMap { $0 }.compactMap { $0.folder }
+    }
+
+    /// Move an app into an existing folder via the context menu. Unlike a drag
+    /// merge, the destination is chosen from a list, so the source may live on
+    /// a different page or inside another folder. A source folder that drops
+    /// to one member dissolves back onto the grid, macOS 15 style.
+    @discardableResult
+    func moveAppIntoFolder(appID: String, folderID: String) -> Bool {
+        guard let (_, destination) = locate(folderID),
+              let target = destination.folder,
+              !target.bundleIDs.contains(appID) else { return false }
+
+        var result = pages
+        var removed = false
+
+        // 1. A standalone grid tile wins.
+        gridLoop: for p in result.indices {
+            if let idx = result[p].firstIndex(where: { $0.bundleID == appID }) {
+                result[p].remove(at: idx)
+                removed = true
+                break gridLoop
+            }
+        }
+
+        // 2. Otherwise the app lives inside another folder.
+        if !removed {
+            folderLoop: for p in result.indices {
+                for t in result[p].indices {
+                    guard var f = result[p][t].folder,
+                          f.bundleIDs.contains(appID) else { continue }
+                    f.bundleIDs.removeAll { $0 == appID }
+                    if f.bundleIDs.count >= 2 {
+                        result[p][t] = .makeFolder(f)
+                    } else {
+                        let survivors = f.bundleIDs.map { Tile.app($0) }
+                        result[p].remove(at: t)
+                        result[p].insert(contentsOf: survivors,
+                                         at: min(t, result[p].count))
+                    }
+                    removed = true
+                    break folderLoop
+                }
+            }
+        }
+        guard removed else { return false }
+
+        // 3. Re-find the destination by id: removing or dissolving the source
+        //    may have shifted every index on that page.
+        guard let dp = result.firstIndex(where: { page in
+                  page.contains { $0.id == folderID } }),
+              let di = result[dp].firstIndex(where: { $0.id == folderID }),
+              var destinationFolder = result[dp][di].folder else { return false }
+        destinationFolder.bundleIDs.append(appID)
+        result[dp][di] = .makeFolder(destinationFolder)
+
+        withAnimation(Motion.reorder) { pages = result }
+        flashID = folderID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            if self?.flashID == folderID { self?.flashID = nil }
+        }
+        // Reveal the destination so the move has visible feedback.
+        folderOpenOrigin = nil
+        openFolderID = folderID
+        persist()
+        return true
+    }
 
     /// Inserts a tile at the requested slot **on the requested page**. When
     /// that page is full, its last tile cascades into the following page (and

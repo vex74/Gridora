@@ -65,13 +65,10 @@ struct PanelLayer: View {
 
             if let folderID = model.openFolderID, let folder = model.folder(folderID) {
                 FolderOverlay(folderID: folderID, folder: folder)
-                    // Launchpad grows the folder out of the grid instead of
-                    // cross-fading a modal. A modest scale-in from the centre
-                    // reads the same way without tracking the tile's frame
-                    // (which would put a PreferenceKey back on the paging path).
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.86, anchor: .center).combined(with: .opacity),
-                        removal: .opacity))
+                    // The scale-in is owned by FolderOverlay itself so it can
+                    // anchor to the clicked tile; the parent only cross-fades.
+                    // No PreferenceKey on the paging path.
+                    .transition(.opacity)
                     .zIndex(5)
             }
 

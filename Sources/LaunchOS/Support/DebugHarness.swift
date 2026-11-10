@@ -865,6 +865,69 @@ extension LauncherModel {
             debugLog("H reorder armed=\(armed ?? "-") start=0 landed=\(landed)"
                 + " count=\(pages[0].count)")
         }
+
+        // I: NON-ZERO per-edge insets. `probeCell` used to divide by cellW
+        // without subtracting the insets, so on a real user layout (18% side
+        // margins) every merge probe landed in a neighbouring cell and folder
+        // creation silently failed. The all-zero cases above passed, which is
+        // exactly why the bug survived — keep this as a permanent regression.
+        let savedInsets = settings.gridInsets
+        settings.gridInsets = GridInsets(top: 0.098, left: 0.18,
+                                         bottom: 0.098, right: 0.18)
+        let im = metrics
+        func attemptInset(_ label: String, from: Int, to: Int) {
+            restore()
+            guard pages[0].count > max(from, to) else { return }
+            let targetID = pages[0][to].id
+            let start = im.iconCenter(of: from)
+            let end = im.iconCenter(of: to)
+            pointerDown(at: start)
+            pointerDragged(from: start, to: CGPoint(x: start.x + 12, y: start.y + 12))
+            for step in 1...10 {
+                let t = CGFloat(step) / 10
+                pointerDragged(from: start,
+                               to: CGPoint(x: start.x + (end.x - start.x) * t,
+                                           y: start.y + (end.y - start.y) * t))
+            }
+            let armed = drag?.mergeTarget
+            pointerUp(at: end)
+            let expected = original[0].filter { $0.isFolder }.count + 1
+            let folders = pages[0].filter { $0.isFolder }
+            debugLog("\(label) armed=\(armed == targetID) folders=\(folders.count)"
+                + " expected=\(expected)")
+        }
+        attemptInset("I1 inset 0->1", from: 0, to: 1)
+        attemptInset("I2 inset 1->0", from: 1, to: 0)
+        attemptInset("I3 inset 0->10", from: 0, to: 10)
+        attemptInset("I4 inset 5->6", from: 5, to: 6)
+        settings.gridInsets = savedInsets
+
+        // J: the context-menu path — grid app into a folder, app between two
+        // folders, and dissolving a source folder that drops to one member.
+        restore()
+        let five = original[0].prefix(5).compactMap { $0.bundleID }
+        if five.count == 5 {
+            pages = [[
+                .makeFolder(Folder(name: "A", bundleIDs: [five[0], five[1]])),
+                .makeFolder(Folder(name: "B", bundleIDs: [five[2], five[3]])),
+                .app(five[4])
+            ]]
+            let a = pages[0][0].id
+            let b = pages[0][1].id
+            let j1 = moveAppIntoFolder(appID: five[4], folderID: a)
+            debugLog("J1 gridIntoFolder moved=\(j1)"
+                + " members=\(folder(a)?.bundleIDs.count ?? -1)"
+                + " gridGone=\(!pages[0].contains { $0.bundleID == five[4] })")
+            let j2 = moveAppIntoFolder(appID: five[4], folderID: b)
+            debugLog("J2 betweenFolders moved=\(j2)"
+                + " A=\(folder(a)?.bundleIDs.count ?? -1)"
+                + " B=\(folder(b)?.bundleIDs.count ?? -1)")
+            let j3 = moveAppIntoFolder(appID: five[0], folderID: b)
+            debugLog("J3 dissolveSource moved=\(j3) aGone=\(folder(a) == nil)"
+                + " survivorOnGrid=\(pages[0].contains { $0.bundleID == five[1] })")
+            let j4 = moveAppIntoFolder(appID: five[0], folderID: b)
+            debugLog("J4 duplicateRejected moved=\(j4)")
+        }
         debugLog("MERGE PROBE DONE")
     }
 }

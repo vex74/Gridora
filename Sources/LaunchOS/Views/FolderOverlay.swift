@@ -15,6 +15,7 @@ struct FolderOverlay: View {
     @State private var nameDraft = ""
     @State private var pageIndex = 0
     @State private var panelFrame: CGRect = .zero
+    @State private var appeared = false
     @FocusState private var nameFocused: Bool
 
     private let columns = 3
@@ -49,7 +50,14 @@ struct FolderOverlay: View {
     var body: some View {
         GeometryReader { window in
             ZStack {
-                Color.black.opacity(folderDragInfo.outsidePanel ? 0.10 : 0.46)
+                // macOS 15 blurs the wallpaper and the grid behind an open
+                // folder instead of laying a flat black sheet over them.
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+
+                Color.black.opacity(folderDragInfo.outsidePanel ? 0.10 : 0.28)
                     .ignoresSafeArea()
                     .onTapGesture { close() }
 
@@ -78,6 +86,11 @@ struct FolderOverlay: View {
                         Color.clear.onAppear { panelFrame = panel.frame(in: .global) }
                     }
                 )
+                // Grow out of the clicked folder tile, then rest slightly
+                // above centre — both are macOS 15 Launchpad behaviours.
+                .offset(y: -26)
+                .scaleEffect(appeared ? 1 : 0.86, anchor: openAnchor(in: window.size))
+                .opacity(appeared ? 1 : 0)
                 .opacity(folderDragInfo.outsidePanel ? 0.06 : 1)
                 .animation(Motion.quick, value: folderDragInfo.outsidePanel)
 
@@ -87,7 +100,10 @@ struct FolderOverlay: View {
                                      windowFrame: window.frame(in: .global))
                 }
             }
-            .onAppear { nameDraft = folder.name }
+            .onAppear {
+                nameDraft = folder.name
+                withAnimation(Motion.panel) { appeared = true }
+            }
             .onChange(of: folderID) { _, _ in
                 nameDraft = folder.name
                 pageIndex = 0
@@ -152,9 +168,9 @@ struct FolderOverlay: View {
 
             HStack(spacing: 7) {
                 ForEach(chunks.indices, id: \.self) { index in
-                    Capsule()
+                    Circle()
                         .fill(.white.opacity(index == pageIndex ? 0.9 : 0.28))
-                        .frame(width: index == pageIndex ? 18 : 6, height: 6)
+                        .frame(width: 6, height: 6)
                 }
             }
 
@@ -226,6 +242,19 @@ struct FolderOverlay: View {
         .padding(.vertical, 18)
     }
 
+    /// Launchpad grows a folder out of the tile that was clicked. The pager
+    /// frame and this anchor are both in SwiftUI's `.global` space (origin at
+    /// the window's top-left), so the ratio is a valid UnitPoint here. A
+    /// missing/zero pager frame (cold start, probes) falls back to centre.
+    private func openAnchor(in size: CGSize) -> UnitPoint {
+        guard let p = model.folderOpenOrigin,
+              size.width > 1, size.height > 1,
+              model.pagerFrameInWindow.width > 1 else { return .center }
+        let f = model.pagerFrameInWindow
+        return UnitPoint(x: min(max((f.minX + p.x) / size.width, 0), 1),
+                         y: min(max((f.minY + p.y) / size.height, 0), 1))
+    }
+
     private func beginRename() {
         nameDraft = folder.name
         model.renamingFolderID = folderID
@@ -255,6 +284,10 @@ struct FolderAppCell: View {
     let cellHeight: CGFloat
 
     @State private var hover = false
+
+    private var otherFolders: [Folder] {
+        model.allFolders.filter { $0.id != folderID }
+    }
 
     var body: some View {
         VStack(spacing: 9) {
@@ -287,6 +320,19 @@ struct FolderAppCell: View {
             Button("打开") { model.openFolderID = nil; model.launch(app) }
             Button("在访达中显示") {
                 NSWorkspace.shared.activateFileViewerSelecting([app.url])
+            }
+            Divider()
+            Menu("移动到其他文件夹") {
+                ForEach(otherFolders) { folder in
+                    Button {
+                        model.moveAppIntoFolder(appID: app.bundleID, folderID: folder.id)
+                    } label: {
+                        Text("\(folder.name) · \(folder.bundleIDs.count) 个 App")
+                    }
+                }
+                if otherFolders.isEmpty {
+                    Text("没有其他文件夹")
+                }
             }
             Divider()
             Button("从文件夹移出") {
