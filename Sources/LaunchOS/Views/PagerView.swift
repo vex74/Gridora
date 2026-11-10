@@ -253,18 +253,44 @@ struct DraggedTileVisual: View {
 // MARK: - One page of tiles
 
 struct GridPage: View {
+    /// Low-frequency companion of the drag: published on start / end / page
+    /// change / merge change / insertion-slot change, never per pointer event.
+    @EnvironmentObject var dragInfo: DragSemanticState
     let page: Int
     let tiles: [Tile]
     let metrics: GridMetrics
 
+    /// Pure preview of where a tile sits while the pointer is over a gap. A
+    /// merge target keeps `insertion == nil` and the grid frozen, so the target
+    /// cannot slide away from under the artwork. Probes assert this mapping
+    /// equals the array `reorderDraggedTile` commits on release.
+    static func previewIndex(index: Int,
+                             active: Bool,
+                             source: Int?,
+                             insertion: Int?) -> Int {
+        guard active, let s = source, let ins = insertion else { return index }
+        return FolderGridMetrics.displayIndex(index: index, source: s, insertion: ins)
+    }
+
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        let live = ProbeConfig.liveReflow && dragInfo.value.active
+            && dragInfo.value.page == page
+        let source = dragInfo.value.sourceIndex
+        let insertion = live ? dragInfo.value.insertionSlot : nil
+        return ZStack(alignment: .topLeading) {
             ForEach(Array(tiles.enumerated()), id: \.element.id) { index, tile in
+                let shown = Self.previewIndex(index: index,
+                                              active: live,
+                                              source: source,
+                                              insertion: insertion)
                 TileView(tile: tile,
                          index: index,
                          page: page,
                          metrics: metrics)
-                    .position(metrics.center(of: index))
+                    .position(metrics.center(of: shown))
+                    // Only cell crossings animate: `shown` is derived from the
+                    // low-frequency insertion slot, not from pointer movement.
+                    .animation(Motion.quick, value: shown)
                     // No transition here. Pages are now built on demand as the
                     // ±1 window moves, so an insertion transition would fire
                     // on every page crossing and flash a scaled-in grid.
