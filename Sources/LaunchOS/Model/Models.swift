@@ -249,32 +249,24 @@ struct Settings: Codable, Equatable {
     /// switch, so they get the quiet behaviour. Reversible in General.
     var showInDock: Bool = false
 
-    /// macOS 26+ Liquid Glass for the search surface: field, results panel
-    /// and the full-screen fog. Old state files have no key and get the new
-    /// look; below macOS 26 the view falls back to a material + dark tint.
-    var searchGlassEnabled: Bool = true
-    var searchGlassStyle: SearchGlassStyle = .regular
-    /// Dark tint laid over the glass so white search text stays legible on a
-    /// bright wallpaper. 0 = pure system glass.
-    var searchGlassTint: Double = Settings.defaultSearchGlassTint
-    /// Corner radius shared by the field and the results panel, in points.
-    var searchGlassRadius: Double = Settings.defaultSearchGlassRadius
-    /// Dimming behind the glass; replaces the old hard-coded 0.26 black scrim.
-    var searchScrim: Double = Settings.defaultSearchScrim
-
-    /// macOS 26+ Liquid Glass for the open folder panel. Independent of the
-    /// search surface: the folder is far larger, carries white labels and has
-    /// its own 24 pt panel radius, so it ships with a deeper tint. All five
-    /// values are adjustable in Settings ▸ Appearance, and toggling it off
-    /// restores the original near-black panel. Old state files have none of
-    /// these keys and get the new glass look.
-    var folderGlassEnabled: Bool = true
-    var folderGlassStyle: SearchGlassStyle = .regular
-    var folderGlassTint: Double = Settings.defaultFolderGlassTint
-    var folderGlassRadius: Double = Settings.defaultFolderGlassRadius
-    /// Dimming of the full-screen sheet behind the folder panel; replaces the
-    /// old hard-coded 0.28 black scrim.
-    var folderGlassScrim: Double = Settings.defaultFolderGlassScrim
+    /// macOS 26+ Liquid Glass, ONE parameter set for every glass surface:
+    /// the search field, the search results panel, the full-screen search fog,
+    /// the open folder panel and the folder icons on the grid. Earlier builds
+    /// kept the search and folder groups separate; they are now merged, and
+    /// `init(from:)` migrates the two old groups into these five values (the
+    /// folder group wins because it was tuned later on the larger surface).
+    /// Below macOS 26 every surface falls back to a material + dark tint.
+    var glassEnabled: Bool = true
+    var glassStyle: SearchGlassStyle = .regular
+    /// Dark tint laid over the glass so white text stays legible on a bright
+    /// wallpaper. 0 = pure system glass.
+    var glassTint: Double = Settings.defaultGlassTint
+    /// Corner radius of the largest glass surface (the folder panel), in
+    /// points. The search field and the folder icons derive theirs
+    /// proportionally — one number, consistent rounding everywhere.
+    var glassRadius: Double = Settings.defaultGlassRadius
+    /// Dimming behind the glass (search fog, folder sheet).
+    var glassScrim: Double = Settings.defaultGlassScrim
 
     /// User-recordable shortcuts. Old state files have none of these keys and
     /// get exactly the chords older builds hard-wired, so an upgrade never
@@ -292,21 +284,19 @@ struct Settings: Codable, Equatable {
     var letterOpensSearch: Bool = false
 
     static let gridInsetRange: ClosedRange<Double> = 0...0.18
-    static let searchGlassTintRange: ClosedRange<Double> = 0...0.75
-    static let searchGlassRadiusRange: ClosedRange<Double> = 6...28
-    static let searchScrimRange: ClosedRange<Double> = 0...0.60
-    static let defaultSearchGlassTint: Double = 0.32
-    static let defaultSearchGlassRadius: Double = 14
-    static let defaultSearchScrim: Double = 0.26
-
-    static let folderGlassTintRange: ClosedRange<Double> = 0...0.75
-    static let folderGlassRadiusRange: ClosedRange<Double> = 8...36
-    static let folderGlassScrimRange: ClosedRange<Double> = 0...0.60
-    /// The folder radius starts at the shared panel radius; AppearanceProbe
-    /// asserts the two never drift apart.
-    static let defaultFolderGlassRadius: Double = Double(DesignTokens.panelRadius)
-    static let defaultFolderGlassTint: Double = 0.38
-    static let defaultFolderGlassScrim: Double = 0.28
+    /// Union of the two former ranges (search 0…0.75 / folder 0…0.75).
+    static let glassTintRange: ClosedRange<Double> = 0...0.75
+    /// Union of the two former ranges (search 6…28 / folder 8…36).
+    static let glassRadiusRange: ClosedRange<Double> = 6...36
+    static let glassScrimRange: ClosedRange<Double> = 0...0.60
+    /// The folder panel used to sit at 0.38 and the search field at 0.32; one
+    /// value now serves both, and 0.38 is the one that was actually tuned
+    /// against white labels on the big panel.
+    static let defaultGlassTint: Double = 0.38
+    /// Starts at the shared panel radius; the search field derives ~58% of it
+    /// (24 pt → the 14 pt the field has always used).
+    static let defaultGlassRadius: Double = Double(DesignTokens.panelRadius)
+    static let defaultGlassScrim: Double = 0.28
 
     /// Single source of truth for the icon-size slider. The upper bound is
     /// 140% because the cell headroom clamp in GridMetrics.iconSize already
@@ -321,6 +311,9 @@ struct Settings: Codable, Equatable {
         case scrollSpeed, reverseScroll, useWallpaper
         case wheelLines, launchAtLogin, extraFolders, wallpaperPath, gridInset, gridInsets, quitOnHide, showInDock
         case residencyChoiceVersion
+        /// New single glass group.
+        case glassEnabled, glassStyle, glassTint, glassRadius, glassScrim
+        /// Legacy groups: decoded only to migrate into the values above.
         case searchGlassEnabled, searchGlassStyle, searchGlassTint, searchGlassRadius, searchScrim
         case folderGlassEnabled, folderGlassStyle, folderGlassTint, folderGlassRadius, folderGlassScrim
         case launcherHotKey, previousPageHotKey, nextPageHotKey
@@ -371,34 +364,47 @@ struct Settings: Codable, Equatable {
         if storedResidencyVersion < 1 { quitOnHide = false }
         // Old state files also predate the Dock switch; they get the quiet shape.
         showInDock = try c.decodeIfPresent(Bool.self, forKey: .showInDock) ?? false
-        searchGlassEnabled = try c.decodeIfPresent(Bool.self, forKey: .searchGlassEnabled) ?? true
-        // Decode as a raw string: a corrupt enum value must not take down the
-        // whole state file the way decodeIfPresent(Enum.self) would.
-        let styleRaw = try c.decodeIfPresent(String.self, forKey: .searchGlassStyle) ?? ""
-        searchGlassStyle = SearchGlassStyle(rawValue: styleRaw) ?? .regular
-        searchGlassTint = clamp(try c.decodeIfPresent(Double.self, forKey: .searchGlassTint)
-                                ?? Settings.defaultSearchGlassTint,
-                                to: Settings.searchGlassTintRange)
-        searchGlassRadius = clamp(try c.decodeIfPresent(Double.self, forKey: .searchGlassRadius)
-                                  ?? Settings.defaultSearchGlassRadius,
-                                  to: Settings.searchGlassRadiusRange)
-        searchScrim = clamp(try c.decodeIfPresent(Double.self, forKey: .searchScrim)
-                            ?? Settings.defaultSearchScrim,
-                            to: Settings.searchScrimRange)
-        folderGlassEnabled = try c.decodeIfPresent(Bool.self, forKey: .folderGlassEnabled) ?? true
-        // Same raw-string decode as the search surface: a corrupt style must
-        // not take down the whole state file.
-        let folderStyleRaw = try c.decodeIfPresent(String.self, forKey: .folderGlassStyle) ?? ""
-        folderGlassStyle = SearchGlassStyle(rawValue: folderStyleRaw) ?? .regular
-        folderGlassTint = clamp(try c.decodeIfPresent(Double.self, forKey: .folderGlassTint)
-                                ?? Settings.defaultFolderGlassTint,
-                                to: Settings.folderGlassTintRange)
-        folderGlassRadius = clamp(try c.decodeIfPresent(Double.self, forKey: .folderGlassRadius)
-                                  ?? Settings.defaultFolderGlassRadius,
-                                  to: Settings.folderGlassRadiusRange)
-        folderGlassScrim = clamp(try c.decodeIfPresent(Double.self, forKey: .folderGlassScrim)
-                                 ?? Settings.defaultFolderGlassScrim,
-                                 to: Settings.folderGlassScrimRange)
+        // One glass group. New files carry `glass*`; files written by v1.4.x
+        // carry two independent groups. The folder group wins the merge: it is
+        // the larger surface and the one the user tuned last, so the panel
+        // keeps looking exactly as it did and only the search surfaces snap to
+        // it. Missing keys (even older files) fall back to the shipped look.
+        let oldSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .searchGlassEnabled)
+        let oldSearchStyleRaw = try c.decodeIfPresent(String.self, forKey: .searchGlassStyle) ?? ""
+        let oldSearchStyle = SearchGlassStyle(rawValue: oldSearchStyleRaw)
+        let oldSearchTint = try c.decodeIfPresent(Double.self, forKey: .searchGlassTint)
+        let oldSearchRadius = try c.decodeIfPresent(Double.self, forKey: .searchGlassRadius)
+        let oldSearchScrim = try c.decodeIfPresent(Double.self, forKey: .searchScrim)
+
+        let oldFolderEnabled = try c.decodeIfPresent(Bool.self, forKey: .folderGlassEnabled)
+        // Raw string decode for both groups: a corrupt enum value must never
+        // take down the whole state file.
+        let oldFolderStyleRaw = try c.decodeIfPresent(String.self, forKey: .folderGlassStyle) ?? ""
+        let oldFolderStyle = SearchGlassStyle(rawValue: oldFolderStyleRaw)
+        let oldFolderTint = try c.decodeIfPresent(Double.self, forKey: .folderGlassTint)
+        let oldFolderRadius = try c.decodeIfPresent(Double.self, forKey: .folderGlassRadius)
+        let oldFolderScrim = try c.decodeIfPresent(Double.self, forKey: .folderGlassScrim)
+
+        glassEnabled = try c.decodeIfPresent(Bool.self, forKey: .glassEnabled)
+            ?? oldFolderEnabled ?? oldSearchEnabled ?? true
+        if let raw = try c.decodeIfPresent(String.self, forKey: .glassStyle),
+           let style = SearchGlassStyle(rawValue: raw) {
+            glassStyle = style
+        } else {
+            glassStyle = oldFolderStyle ?? oldSearchStyle ?? .regular
+        }
+        glassTint = clamp(try c.decodeIfPresent(Double.self, forKey: .glassTint)
+                          ?? oldFolderTint ?? oldSearchTint
+                          ?? Settings.defaultGlassTint,
+                          to: Settings.glassTintRange)
+        glassRadius = clamp(try c.decodeIfPresent(Double.self, forKey: .glassRadius)
+                            ?? oldFolderRadius ?? oldSearchRadius
+                            ?? Settings.defaultGlassRadius,
+                            to: Settings.glassRadiusRange)
+        glassScrim = clamp(try c.decodeIfPresent(Double.self, forKey: .glassScrim)
+                           ?? oldFolderScrim ?? oldSearchScrim
+                           ?? Settings.defaultGlassScrim,
+                           to: Settings.glassScrimRange)
         // Shortcuts are resolved in priority order. A missing, corrupt or
         // colliding stored value falls back to that role's shipped default,
         // then to a safe alternate: no state file can leave two roles fighting
@@ -681,6 +687,15 @@ enum Motion {
     static var quick: Animation {
         reduceMotion ? .linear(duration: 0.001) : .easeOut(duration: 0.16)
     }
+    /// Horizontal page slide. The main grid drives this through the
+    /// display-linked spring (360/38 = critically damped, visually settled by
+    /// ~0.38 s), so the folder panel — which slides its pages in SwiftUI —
+    /// uses the same critical damping instead of a bouncy default spring.
+    /// One page turn must feel identical in both places.
+    static var page: Animation {
+        reduceMotion ? .linear(duration: 0.001)
+                     : .spring(response: 0.36, dampingFraction: 1.0)
+    }
     /// Shared by the window fade and the content transform so show / hide
     /// never split into two different timings.
     static var windowDuration: TimeInterval { reduceMotion ? 0.001 : 0.20 }
@@ -712,4 +727,49 @@ enum Motion {
     /// 6000 × 0.14 s look-ahead ≈ 840 pt, enough for a fast flick to choose
     /// the next page instead of always snapping back to the nearest one.
     static let maxSettleVelocity: CGFloat = 6000
+}
+
+// MARK: - Settings encoding
+
+extension Settings {
+    /// Written by hand because `CodingKeys` still carries the two retired
+    /// glass groups so old files can be decoded. Encoding emits only the
+    /// current keys: the merge has already happened, and re-writing the legacy
+    /// keys would let a stale value win the migration on the next launch.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(columns, forKey: .columns)
+        try c.encode(rows, forKey: .rows)
+        try c.encode(iconScale, forKey: .iconScale)
+        try c.encode(showLabels, forKey: .showLabels)
+        try c.encode(vertical, forKey: .vertical)
+        try c.encode(autoHideUnused, forKey: .autoHideUnused)
+        try c.encode(autoHideDays, forKey: .autoHideDays)
+        try c.encode(backgroundDim, forKey: .backgroundDim)
+        try c.encode(backgroundBlur, forKey: .backgroundBlur)
+        try c.encode(scrollSpeed, forKey: .scrollSpeed)
+        try c.encode(reverseScroll, forKey: .reverseScroll)
+        try c.encode(useWallpaper, forKey: .useWallpaper)
+        try c.encode(wheelLines, forKey: .wheelLines)
+        try c.encode(launchAtLogin, forKey: .launchAtLogin)
+        try c.encode(extraFolders, forKey: .extraFolders)
+        try c.encode(gridInset, forKey: .gridInset)
+        try c.encode(gridInsets, forKey: .gridInsets)
+        try c.encode(quitOnHide, forKey: .quitOnHide)
+        try c.encode(residencyChoiceVersion, forKey: .residencyChoiceVersion)
+        try c.encode(showInDock, forKey: .showInDock)
+        try c.encode(glassEnabled, forKey: .glassEnabled)
+        try c.encode(glassStyle, forKey: .glassStyle)
+        try c.encode(glassTint, forKey: .glassTint)
+        try c.encode(glassRadius, forKey: .glassRadius)
+        try c.encode(glassScrim, forKey: .glassScrim)
+        try c.encode(launcherHotKey, forKey: .launcherHotKey)
+        try c.encode(previousPageHotKey, forKey: .previousPageHotKey)
+        try c.encode(nextPageHotKey, forKey: .nextPageHotKey)
+        try c.encode(searchHotKey, forKey: .searchHotKey)
+        try c.encode(letterOpensSearch, forKey: .letterOpensSearch)
+        // `wallpaperPath` is optional: only written when known, matching the
+        // old synthesized behaviour.
+        try c.encodeIfPresent(wallpaperPath, forKey: .wallpaperPath)
+    }
 }
