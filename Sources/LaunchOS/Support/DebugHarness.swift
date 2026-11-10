@@ -945,6 +945,7 @@ extension LauncherModel {
     /// G: the grid's live make-way preview matches the committed reorder,
     ///    and stays frozen while a merge target is highlighted
     /// H: closing a folder resets its page and returns the wheel to the pager
+    /// I: renaming from the header keeps the panel, its page and its members
     func runFolderInteractionProbe(consume: (Bool, Bool, Bool, Bool) -> Bool) {
         let logPath = "/tmp/launchos-folder-interaction.log"
         try? FileManager.default.removeItem(atPath: logPath)
@@ -1234,6 +1235,40 @@ extension LauncherModel {
         openFolderID = nil
         check("H1 folder page resets on close", folderPage == 0, "page=\(folderPage)")
         check("H2 wheel returns to pager", !scrollBelongsToPanel)
+
+        // I — renaming. The header no longer shows an app count or a pencil:
+        // the folder name itself is the control, one click. The tap handler
+        // only sets `renamingFolderID` and the commit calls `renameFolder`, so
+        // those two model calls are the entire data path and nothing else may
+        // move — the panel has to stay open on the same page with the same
+        // members while the name changes.
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        setFolderPage(1)
+        let iOriginal = locate(folderID)?.1.folder?.name ?? ""
+        renamingFolderID = folderID
+        check("I1 name click arms rename", renamingFolderID == folderID)
+        renameFolder(id: folderID, to: "  桌面整理  ")
+        renamingFolderID = nil
+        let iRenamed = locate(folderID)?.1.folder?.name ?? ""
+        check("I2 name trimmed and applied", iRenamed == "桌面整理", "name=\(iRenamed)")
+        check("I3 panel stays open", openFolderID == folderID)
+        check("I4 folder page kept", folderPage == 1, "page=\(folderPage)")
+        check("I5 members untouched", members(folderID) == ids)
+        renameFolder(id: folderID, to: "   ")
+        let iBlank = locate(folderID)?.1.folder?.name ?? ""
+        check("I6 blank name rejected", iBlank == "桌面整理", "name=\(iBlank)")
+        renameFolder(id: folderID, to: iOriginal)
+        let iRestored = locate(folderID)?.1.folder?.name ?? ""
+        check("I7 rename round-trips", iRestored == iOriginal, "name=\(iRestored)")
+        // The header's own pixels (no count label, no pencil button, one-click
+        // title) are not assertable from here — SwiftUI text is not an
+        // inspectable AppKit subview. Recording it as a NOTE instead of a
+        // green check so this probe never fakes a pass it did not test.
+        note("NOTE header layout: count text + pencil button removed,"
+             + " single click on the name arms rename (visual check)")
+
         restore()
         settings.gridInsets = savedInsets
     }
