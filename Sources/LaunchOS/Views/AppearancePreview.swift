@@ -11,11 +11,11 @@ struct GlassPreviewSnapshot: Equatable {
     let scrimPercent: Int
 
     init(settings: Settings) {
-        enabled = settings.searchGlassEnabled
-        style = settings.searchGlassStyle
-        tintPercent = Int((settings.searchGlassTint * 100).rounded())
-        radius = Int(settings.searchGlassRadius.rounded())
-        scrimPercent = Int((settings.searchScrim * 100).rounded())
+        enabled = settings.glassEnabled
+        style = settings.glassStyle
+        tintPercent = Int((settings.glassTint * 100).rounded())
+        radius = Int(SearchGlass.fieldRadius(settings.glassRadius).rounded())
+        scrimPercent = Int((settings.glassScrim * 100).rounded())
     }
 
     var modeText: String { enabled ? "液态玻璃" : "近黑实底" }
@@ -67,15 +67,15 @@ struct GlassPreviewStage: View {
     }
 
     private var stage: some View {
-        let radius = CGFloat(model.settings.searchGlassRadius)
+        let radius = SearchGlass.fieldRadius(model.settings.glassRadius)
         return ZStack {
             DesignTokens.canvas
             RadialGradient(colors: [DesignTokens.auroraCoolA.opacity(0.55), .clear],
                            center: .topLeading, startRadius: 20, endRadius: 420)
             // Mirrors the live scrim: glass thins the opaque layer, so the
             // preview shows the same relative darkening as search does.
-            Color.black.opacity(model.settings.searchScrim
-                                * (model.settings.searchGlassEnabled ? 0.45 : 1.0))
+            Color.black.opacity(model.settings.glassScrim
+                                * (model.settings.glassEnabled ? 0.45 : 1.0))
 
             VStack(spacing: 9) {
                 fieldPreview(radius: radius)
@@ -142,11 +142,11 @@ struct FolderGlassSnapshot: Equatable {
     let scrimPercent: Int
 
     init(settings: Settings) {
-        enabled = settings.folderGlassEnabled
-        style = settings.folderGlassStyle
-        tintPercent = Int((settings.folderGlassTint * 100).rounded())
-        radius = Int(settings.folderGlassRadius.rounded())
-        scrimPercent = Int((settings.folderGlassScrim * 100).rounded())
+        enabled = settings.glassEnabled
+        style = settings.glassStyle
+        tintPercent = Int((settings.glassTint * 100).rounded())
+        radius = Int(settings.glassRadius.rounded())
+        scrimPercent = Int((settings.glassScrim * 100).rounded())
     }
 
     var modeText: String { enabled ? "液态玻璃" : "近黑实底" }
@@ -214,8 +214,8 @@ struct FolderGlassPreviewStage: View {
                 RadialGradient(colors: [DesignTokens.auroraCoolA.opacity(0.55), .clear],
                                center: .topLeading, startRadius: 20, endRadius: 420)
                 // Mirrors the live sheet: glass needs less opaque dimming behind it.
-                Color.black.opacity(model.settings.folderGlassScrim
-                                    * (model.settings.folderGlassEnabled ? 0.45 : 1.0))
+                Color.black.opacity(model.settings.glassScrim
+                                    * (model.settings.glassEnabled ? 0.45 : 1.0))
                 folderPanel.frame(width: 208)
             }
             HStack(spacing: 10) {
