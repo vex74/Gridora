@@ -305,22 +305,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     "system=\(ProcessInfo.processInfo.operatingSystemVersionString)",
                     "glassAvailable=\(SearchGlass.isAvailable) "
                         + "systemHasNSGlassEffectView=\(NSClassFromString("NSGlassEffectView") != nil)",
-                    "enabled=\(s.searchGlassEnabled) style=\(s.searchGlassStyle.rawValue) "
-                        + "tint=\(s.searchGlassTint) radius=\(s.searchGlassRadius) scrim=\(s.searchScrim)",
+                    "enabled=\(s.glassEnabled) style=\(s.glassStyle.rawValue) "
+                        + "tint=\(s.glassTint) radius=\(s.glassRadius) scrim=\(s.glassScrim)",
                     "searchOpen=\(self.model.searchOpen) results=\(self.model.searchResults.count)",
                     "glassOn layers=\(self.glassLayerCounts(onTree))",
                     "glassOn tree=\(self.classHistogram(onTree))"
                 ]
                 self.sampleFrames(for: 1.2) { onFrames in
                     lines.append("glassOn frames \(onFrames)")
-                    self.model.settings.searchGlassEnabled = false
+                    self.model.settings.glassEnabled = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                         guard let self else { return }
                         let offTree = self.treeClasses(in: self.window?.contentView)
                         lines.append("glassOff layers=\(self.glassLayerCounts(offTree))")
                         self.sampleFrames(for: 1.2) { offFrames in
                             lines.append("glassOff frames \(offFrames)")
-                            self.model.settings.searchGlassEnabled = true
+                            self.model.settings.glassEnabled = true
                             lines.append("DONE")
                             try? (lines.joined(separator: "\n") + "\n")
                                 .write(toFile: "/tmp/launchos-search-glass.log", atomically: true, encoding: .utf8)
@@ -367,14 +367,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     "folderID=\(folder.id) members=\(folder.bundleIDs.count) "
                         + "openFolderID=\(self.model.openFolderID ?? "nil") "
                         + "resolved=\(self.model.folder(folder.id) != nil)",
-                    "enabled=\(s.folderGlassEnabled) style=\(s.folderGlassStyle.rawValue) "
-                        + "tint=\(s.folderGlassTint) radius=\(s.folderGlassRadius) scrim=\(s.folderGlassScrim)",
+                    "enabled=\(s.glassEnabled) style=\(s.glassStyle.rawValue) "
+                        + "tint=\(s.glassTint) radius=\(s.glassRadius) scrim=\(s.glassScrim)",
                     "glassOn layers=\(onCounts)",
                     "glassOn tree=\(self.classHistogram(onTree))"
                 ]
                 self.sampleFrames(for: 1.0) { onFrames in
                     lines.append("glassOn frames \(onFrames)")
-                    self.model.settings.folderGlassEnabled = false
+                    self.model.settings.glassEnabled = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                         guard let self else { return }
                         let offTree = self.treeClasses(in: self.window?.contentView)
@@ -394,10 +394,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             lines.append(glassDelta ? "A/B PASS" : "A/B FAIL glass layers did not change")
                             // Parameters must reach the rendered description.
                             var tuned = self.model.settings
-                            tuned.folderGlassStyle = .clear
-                            tuned.folderGlassTint = 0.55
-                            tuned.folderGlassRadius = 30
-                            tuned.folderGlassScrim = 0.44
+                            tuned.glassStyle = .clear
+                            tuned.glassTint = 0.55
+                            tuned.glassRadius = 30
+                            tuned.glassScrim = 0.44
                             let snap = FolderGlassSnapshot(settings: tuned)
                             let tunedOK = snap.style == .clear && snap.tintPercent == 55
                                 && snap.radius == 30 && snap.scrimPercent == 44
@@ -407,7 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             self.model.openFolderID = nil
                             lines.append(self.model.openFolderID == nil
                                          ? "close PASS" : "close FAIL")
-                            self.model.settings.folderGlassEnabled = true
+                            self.model.settings.glassEnabled = true
                             lines.append(glassDelta && tunedOK ? "PASS" : "FAIL")
                             lines.append("DONE")
                             try? (lines.joined(separator: "\n") + "\n")
@@ -457,15 +457,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         + "noGlass=\(ProbeConfig.folderIconNoGlass)",
                     "folders=\(folders.count) iconSize=\(Int(iconSize.rounded())) "
                         + "pages=\(self.model.pageCount) openFolderID=\(self.model.openFolderID ?? "nil")",
-                    "enabled=\(s.folderGlassEnabled) style=\(s.folderGlassStyle.rawValue) "
-                        + "tint=\(s.folderGlassTint) radius=\(s.folderGlassRadius) scrim=\(s.folderGlassScrim)",
+                    "enabled=\(s.glassEnabled) style=\(s.glassStyle.rawValue) "
+                        + "tint=\(s.glassTint) radius=\(s.glassRadius) scrim=\(s.glassScrim)",
                     "iconSnapshot=\(icon0.readout)",
                     "glassOn layers=\(self.glassLayerCounts(onTree))",
                     "glassOn tree=\(self.classHistogram(onTree))"
                 ]
                 self.sampleFrames(for: 1.0) { onFrames in
                     lines.append("glassOn frames \(onFrames)")
-                    self.model.settings.folderGlassEnabled = false
+                    self.model.settings.glassEnabled = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                         guard let self else { return }
                         let offTree = self.treeClasses(in: self.window?.contentView)
@@ -488,20 +488,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             lines.append(!iconOff.enabled && iconOff.modeText == "原材质"
                                          ? "switch PASS" : "switch FAIL")
                             var tuned = self.model.settings
-                            tuned.folderGlassEnabled = true
-                            tuned.folderGlassStyle = .clear
-                            tuned.folderGlassTint = 0.55
-                            tuned.folderGlassRadius = 34
-                            tuned.folderGlassScrim = 0.44
+                            tuned.glassEnabled = true
+                            tuned.glassStyle = .clear
+                            tuned.glassTint = 0.55
+                            tuned.glassRadius = 34
+                            tuned.glassScrim = 0.44
                             let t = FolderIconGlass(settings: tuned, size: iconSize)
                             let expected = min(max(iconSize * 0.235
-                                                   * CGFloat(34 / Settings.defaultFolderGlassRadius),
+                                                   * CGFloat(34 / Settings.defaultGlassRadius),
                                                    iconSize * 0.10), iconSize * 0.42)
                             let geometryOK = abs(t.cornerRadius - expected) < 0.001
                             lines.append(t.enabled && t.style == .clear && t.tintPercent == 55
                                          && t.radius == 34 && t.scrimPercent == 44 && geometryOK
                                          ? "params PASS \(t.readout)" : "params FAIL \(t.readout)")
-                            self.model.settings.folderGlassEnabled = true
+                            self.model.settings.glassEnabled = true
                             lines.append(self.model.openFolderID == nil
                                          ? "grid PASS" : "grid FAIL folder stayed open")
                             lines.append(glassDelta && !iconOff.enabled && t.enabled
@@ -529,7 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SearchRenderProbe.enabled = true
         let logPath = "/tmp/launchos-search-query.log"
         try? FileManager.default.removeItem(atPath: logPath)
-        let originalGlass = model.settings.searchGlassEnabled
+        let originalGlass = model.settings.glassEnabled
 
         func label(_ s: String) -> String { s.isEmpty ? "<empty>" : s }
 
@@ -556,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             lines.append("COLD first-open keyWindow=\(coldWindow?.isKeyWindow ?? false)"
                 + " fr=\(responderName(coldWindow)) query=\(label(self.model.query))"
-                + " glass=\(self.model.settings.searchGlassEnabled)")
+                + " glass=\(self.model.settings.glassEnabled)")
             func insertText(_ s: String) -> Bool {
                 guard let tv = coldWindow?.firstResponder as? NSTextView else { return false }
                 tv.insertText(s, replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -574,7 +574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             @MainActor func runPass(_ glass: Bool) async {
-                self.model.settings.searchGlassEnabled = glass
+                self.model.settings.glassEnabled = glass
                 self.model.openSearch("")
                 lines.append("--- glass=\(glass) ---")
                 for (index, q) in queries.enumerated() {
@@ -614,7 +614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // remaining suspect is the real text-input path. Drive real
             // keyDown events through NSApp.sendEvent (which passes the local
             // monitor) and watch model.query after each character.
-            self.model.settings.searchGlassEnabled = originalGlass
+            self.model.settings.glassEnabled = originalGlass
             let w = self.window
             func frName() -> String {
                 (w?.firstResponder).map { String(describing: type(of: $0)) } ?? "nil"
@@ -635,7 +635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? await Task.sleep(nanoseconds: 500_000_000)
             lines.append("KEYS first-open keyWindow=\(w?.isKeyWindow ?? false)"
                 + " firstResponder=\(frName()) query=\(label(self.model.query))"
-                + " glass=\(self.model.settings.searchGlassEnabled)")
+                + " glass=\(self.model.settings.glassEnabled)")
             for (ch, code) in [("c", UInt16(8)), ("a", UInt16(0)),
                                ("w", UInt16(13)), ("e", UInt16(14))] {
                 postKey(ch, code)
@@ -685,7 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SearchRenderProbe.enabled = true
         let logPath = "/tmp/launchos-search-realuse.log"
         try? FileManager.default.removeItem(atPath: logPath)
-        let originalGlass = model.settings.searchGlassEnabled
+        let originalGlass = model.settings.glassEnabled
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
@@ -757,7 +757,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             for glass in [true, false] {
-                self.model.settings.searchGlassEnabled = glass
+                self.model.settings.glassEnabled = glass
                 self.model.closeSearch()
                 try? await Task.sleep(nanoseconds: 350_000_000)
                 lines.append("=== glass=\(glass) ===")
@@ -805,7 +805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 lines.append(snap("cmdf-typed-c", firstNames))
             }
 
-            self.model.settings.searchGlassEnabled = originalGlass
+            self.model.settings.glassEnabled = originalGlass
             lines.append("DONE")
             try? (lines.joined(separator: "\n") + "\n")
                 .write(toFile: logPath, atomically: true, encoding: .utf8)
@@ -1604,8 +1604,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, let view = self.window?.contentView else { return }
             let dragMode = ProbeConfig.dragFPS
+            let folderMode = ProbeConfig.folderFPS
+            if folderMode {
+                // Open a real multi-page folder before the paging window
+                // starts at 2.0 s. Without one the drive below would page the
+                // (hidden) main grid and quietly measure the wrong thing.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    guard let self else { return }
+                    let multi = self.model.allFolders.first {
+                        self.model.folderPageCount(for: $0.id) > 1
+                    }
+                    if let multi {
+                        self.model.openFolderID = multi.id
+                        self.model.setFolderPage(0)
+                        self.log("fps folder=\(multi.bundleIDs.count) apps id=\(multi.id)")
+                    } else {
+                        self.log("fps folder=NONE (need a folder with 10+ apps)")
+                    }
+                }
+            }
             FrameProbe.shared.start(view: view, drive: { [weak self] in
                 guard let self, !dragMode else { return }
+                if folderMode {
+                    guard self.model.openFolderID != nil else { return }
+                    self.model.turnFolderPage(self.model.folderPage == 0 ? 1 : -1)
+                    return
+                }
                 let count = max(1, self.model.pageCount)
                 self.model.goToPage((self.model.currentPage + 1) % count)
             }, onFrame: dragMode ? { [weak self] frame in
