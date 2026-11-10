@@ -62,6 +62,12 @@ enum ProbeConfig {
     /// rectangle on all three surfaces).
     static let selectionGlassDisabled =
         ProcessInfo.processInfo.environment["LAUNCHOS_NO_SELECTION_GLASS"] == "1"
+    /// v1.6.1: the full-screen fog is shared by the main window and the
+    /// menu-bar cover window (a separate NSWindow at level 26). This
+    /// single-variable rollback restores the old split — main window draws
+    /// ultraThinMaterial + scrim, the cover draws nothing (visible seam).
+    static let noFogUnify =
+        ProcessInfo.processInfo.environment["LAUNCHOS_NO_FOG_UNIFY"] == "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")
