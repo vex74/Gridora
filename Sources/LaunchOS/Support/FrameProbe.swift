@@ -56,6 +56,12 @@ enum ProbeConfig {
     /// assumed.
     static let folderFPS =
         ProcessInfo.processInfo.environment["LAUNCHOS_FOLDER_FPS"] == "1"
+    /// v1.6: the selection/hover highlight now derives its radius, fill and
+    /// glow from the one global glass group. This is the single-variable
+    /// rollback used by the A/B (back to the old hard-coded white rounded
+    /// rectangle on all three surfaces).
+    static let selectionGlassDisabled =
+        ProcessInfo.processInfo.environment["LAUNCHOS_NO_SELECTION_GLASS"] == "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")
