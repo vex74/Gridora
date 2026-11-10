@@ -86,20 +86,16 @@ struct FolderOverlay: View {
     var body: some View {
         GeometryReader { window in
             ZStack {
-                // macOS 15 blurs the wallpaper and the grid behind an open
-                // folder instead of laying a flat black sheet over them.
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-
-                // The dimming behind the glass panel is user-adjustable now;
-                // dragging out of the panel still thins it to 10% so the grid
-                // underneath stays visible as a drop target.
-                Color.black.opacity(folderDragInfo.outsidePanel
-                                    ? 0.10 : model.settings.glassScrim)
-                    .ignoresSafeArea()
-                    .onTapGesture { close() }
+                // One full-screen fog, shared with the menu-bar cover window
+                // (level 26) and with search. Before v1.6.1 this was a local
+                // ultraThinMaterial + scrim, so the top strip — a separate
+                // NSWindow — kept the clean wallpaper and a seam appeared.
+                // The main window is the only one that closes on a click.
+                BackdropFogSurface(
+                    fog: BackdropFog.make(
+                        settings: model.settings,
+                        state: .folder(outsidePanel: folderDragInfo.outsidePanel)),
+                    onClose: { close() })
 
                 VStack(spacing: 0) {
                     header
