@@ -86,8 +86,7 @@ final class ScrollEngine: NSObject {
     /// tried and rejected: at pace = 2 the explicit Euler step overshot a
     /// whole page on a single flick.
     private var pace: CGFloat {
-        let speed = owner?.settings.scrollSpeed ?? 1.0
-        return CGFloat(min(max(speed, 0.4), 2.0))
+        PagingRules.pace(owner?.settings.scrollSpeed ?? 1.0)
     }
 
     /// Cached at the start of a settle so the frame loop does not read
@@ -241,8 +240,9 @@ final class ScrollEngine: NSObject {
         // Lower "scrolling speed" also raises the bar for a short flick to win
         // a page, so the slider dampens one-flick paging instead of only
         // shrinking the on-screen drag. At the 1.0 default this is the
-        // original, probe-verified min(10% of a page, 90pt).
-        let flickThreshold = min(extent * 0.10, 90) / pace
+        // original, probe-verified min(10% of a page, 90pt). The folder panel
+        // uses the very same rule through `PagingRules`.
+        let flickThreshold = PagingRules.flickThreshold(extent: extent, pace: pace)
 
         // A gesture that moved a meaningful distance but never crossed half a
         // page used to snap back to where it started — the "it takes two
@@ -260,7 +260,7 @@ final class ScrollEngine: NSObject {
         // `nearest` on a fast swipe, and the short-flick bonus used to add a
         // second one on top — a single flick then jumped from page 0 to 2.
         // Clamp to the page where the gesture began, plus or minus one.
-        let limited = min(max(page, startPage - 1), startPage + 1)
+        let limited = PagingRules.limit(page, toGestureStartingAt: startPage)
         let bounded = min(max(limited, 0), CGFloat(owner.pageCount - 1))
         target = bounded * extent
         WheelDiagnostics.log(String(format: "settle pos=%.1f start=%.0f travel=%.1f vel=%.0f nearest=%.0f projected=%.0f pace=%.2f flick=%.0f raw=%.0f -> page=%.0f",
