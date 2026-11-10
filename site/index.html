@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Gridora — 用 SwiftUI + AppKit 写的 macOS 全屏启动台。原生、可键盘驱动、完全可定制。">
+<title>Gridora — 启动台，按你的规则</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<noscript><style>.reveal{opacity:1;transform:none}</style></noscript>
+<style>
+/* ============================================================
+   Design Direction — 克制冷峻工程风
+   Purpose   : 面向 macOS 重度用户/开发者，展示一个原生、键盘驱动、
+               完全可定制的全屏启动台
+   Tone      : 单一方向，近黑冷中性 + 唯一锐利信号色，不混搭
+   Display   : IBM Plex Mono（拉丁等宽，工程读数感）+ Noto Sans SC（中文展示）
+   Body      : IBM Plex Sans + Noto Sans SC；苹方仅作离线回退
+   Dominant  : #0B0D11 冷调近黑  |  Accent: #FF5C35 信号橙（~10%）
+   Memory    : 首屏可搜索、可翻页的启动台模拟 —— 把产品本身摆到访客面前，
+               而不是三张特性卡
+   对比度（实测 WCAG）：text/bg 16.55:1 · muted/bg 7.87:1 ·
+   faint/bg 4.51:1 · accent/bg 6.33:1 · bg/accent 6.33:1
+   ============================================================ */
+:root{
+  /* color */
+  --color-bg:#0B0D11;
+  --color-surface:#12161C;
+  --color-surface-2:#191F27;
+  --color-text:#E9EDF3;
+  --color-muted:#9AA6B6;
+  --color-faint:#6E7B8C;      /* 仅装饰/大字/控件，不用于正文 */
+  --color-accent:#FF5C35;
+  --color-border:rgba(233,237,243,.10);
+  --color-border-strong:rgba(233,237,243,.18);
+  --color-glow:rgba(120,152,196,.10);
+  /* type */
+  --font-display:"IBM Plex Mono","SFMono-Regular","Noto Sans SC","PingFang SC",ui-monospace,monospace;
+  --font-body:"IBM Plex Sans","Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --font-mono:"IBM Plex Mono","SFMono-Regular",Menlo,monospace;
+  --step--1:.8125rem; --step-0:1rem; --step-1:1.25rem; --step-2:1.563rem;
+  --step-3:1.953rem; --step-4:2.441rem; --step-5:3.052rem; --step-6:3.815rem;
+  --step-7:4.768rem;
+  /* space — 8px 基线 */
+  --space-1:4px; --space-2:8px; --space-3:16px; --space-4:24px;
+  --space-5:40px; --space-6:64px; --space-7:96px; --space-8:144px;
+  /* radius / shadow */
+  --radius-sm:3px; --radius-md:6px; --radius-lg:10px;
+  --shadow-1:0 2px 8px rgba(6,10,18,.36);
+  --shadow-2:0 8px 28px rgba(6,10,18,.46);
+  --shadow-3:0 24px 64px rgba(6,10,18,.60);
+  /* motion */
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --ease-quart:cubic-bezier(.25,1,.5,1);
+  --dur-fast:160ms; --dur-base:320ms; --dur-slow:640ms;
+  --shell:1320px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--color-bg); color:var(--color-text);
+  font-family:var(--font-body); font-size:var(--step-0); line-height:1.75;
+  -webkit-font-smoothing:antialiased; overflow-x:hidden;
+}
+/* 氛围层：极淡冷光 + 64px 精确栅格 + 噪点。不是紫蓝渐变，不做发光描边。 */
+.atmosphere{position:fixed;inset:0;pointer-events:none;z-index:0}
+.atmosphere::before{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(64rem 44rem at 76% -12%,var(--color-glow),transparent 64%);
+}
+.atmosphere::after{
+  content:"";position:absolute;inset:0;opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:overlay;
+}
+.grid-overlay{
+  position:absolute;inset:0;opacity:.5;
+  background-image:
+    linear-gradient(to right,rgba(233,237,243,.022) 1px,transparent 1px),
+    linear-gradient(to bottom,rgba(233,237,243,.022) 1px,transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:linear-gradient(to bottom,#000 0,transparent 78%);
+  mask-image:linear-gradient(to bottom,#000 0,transparent 78%);
+}
+.shell{width:min(100% - 2 * clamp(20px,5vw,72px),var(--shell));margin-inline:auto;position:relative;z-index:1}
+a{color:inherit;text-decoration:none}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0}
+:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;border-radius:2px}
+::selection{background:var(--color-accent);color:var(--color-bg)}
+.skip{position:absolute;left:-9999px;top:0;z-index:99;background:var(--color-accent);color:var(--color-bg);padding:12px 20px;font-family:var(--font-mono);font-size:var(--step--1)}
+.skip:focus{left:16px;top:16px}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.eyebrow{
+  font-family:var(--font-mono);font-size:var(--step--1);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--color-faint);
+}
+.rule{height:1px;background:var(--color-border);border:0;margin:0}
+.accent{color:var(--color-accent)}
+
+/* ---------- header ---------- */
+.site-head{
+  position:sticky;top:0;z-index:20;background:var(--color-bg);
+  border-bottom:1px solid var(--color-border);
+}
+.head-inner{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);height:72px}
+.brand{display:flex;align-items:center;gap:12px;font-family:var(--font-display);font-weight:600;font-size:var(--step-0);letter-spacing:-.02em}
+.brand-mark{width:18px;height:18px;border:1.5px solid var(--color-text);position:relative;flex:none}
+.brand-mark::after{content:"";position:absolute;inset:4px;background:var(--color-accent)}
+.head-nav{display:flex;align-items:center;gap:clamp(16px,2.4vw,36px)}
+.head-nav a{
+  display:inline-flex;align-items:center;min-height:44px;
+  font-family:var(--font-mono);font-size:var(--step--1);color:var(--color-muted);
+  letter-spacing:.04em;transition:color var(--dur-fast) var(--ease-out);
+}
+.head-nav a:hover{color:var(--color-text)}
+.head-nav .ver{
+  font-family:var(--font-mono);font-size:11px;color:var(--color-faint);
+  border:1px solid var(--color-border);padding:5px 10px;letter-spacing:.08em;
+}
+@media(max-width:700px){.head-nav a{display:none}}
+
+/* ---------- hero ---------- */
+.hero{position:relative;padding-block:clamp(64px,9vw,128px) clamp(56px,7vw,96px)}
+.hero-grid{
+  display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,1fr);
+  gap:clamp(40px,6vw,88px);align-items:center;
+}
+.hero-copy{position:relative;z-index:2}
+.hero-kicker{display:flex;align-items:center;gap:14px;margin-bottom:var(--space-5)}
+.hero-kicker .bar{width:28px;height:1px;background:var(--color-accent)}
+h1{
+  font-family:var(--font-display);font-weight:600;
+  font-size:clamp(2.8rem,6.4vw,5.6rem);line-height:1.02;letter-spacing:-.045em;
+  margin:0 0 var(--space-4);
+}
+h1 .line2{display:block;padding-left:clamp(0px,3.2vw,56px);position:relative}
+h1 .line2::before{
+  content:"";position:absolute;left:0;top:.16em;width:3px;height:.72em;
+  background:var(--color-accent);
+}
+.hero-lede{max-width:52ch;color:var(--color-muted);font-size:var(--step-1);line-height:1.8;margin:0 0 var(--space-5)}
+.hero-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  min-height:48px;padding:0 22px;border-radius:var(--radius-sm);
+  font-family:var(--font-mono);font-size:var(--step--1);font-weight:500;letter-spacing:.02em;
+  transition:transform var(--dur-fast) var(--ease-out),
+             background-color var(--dur-fast) var(--ease-out),
+             border-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+}
+.btn:hover{transform:translateY(-2px)}
+.btn:active{transform:translateY(0)}
+.btn-primary{background:var(--color-accent);color:var(--color-bg)}
+.btn-primary:hover{background:#FF7857}
+.btn-ghost{border:1px solid var(--color-border-strong);color:var(--color-text)}
+.btn-ghost:hover{border-color:var(--color-accent);color:var(--color-accent)}
+.btn .kbd-hint{opacity:.62;font-size:11px}
+.hero-meta{
+  display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:var(--space-5);
+  padding-top:var(--space-4);border-top:1px solid var(--color-border);
+  font-family:var(--font-mono);font-size:11.5px;color:var(--color-faint);letter-spacing:.03em;
+}
+.hero-meta span::before{content:"·";color:var(--color-accent);margin-right:9px}
+.edge-label{
+  position:absolute;right:-6px;top:calc(50% - 90px);writing-mode:vertical-rl;
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.22em;
+  color:var(--color-faint);text-transform:uppercase;
+}
+@media(max-width:1080px){.edge-label{display:none}}
+
+/* ---------- 启动台模拟（首屏记忆点） ---------- */
+.console-wrap{position:relative;padding-left:22px}
+.ruler{
+  position:absolute;left:0;top:8px;bottom:8px;width:18px;
+  display:flex;flex-direction:column;justify-content:space-between;
+  font-family:var(--font-mono);font-size:9px;color:var(--color-faint);
+  letter-spacing:.04em;opacity:.8;
+}
+.ruler span::before{content:"";display:inline-block;width:5px;height:1px;background:var(--color-border-strong);margin-right:4px;vertical-align:middle}
+.console{
+  border:1px solid var(--color-border-strong);border-radius:var(--radius-lg);
+  background:linear-gradient(180deg,#141922 0%,#0E1218 100%);
+  box-shadow:var(--shadow-3);overflow:hidden;
+  transform:perspective(1400px) rotateY(-2.2deg) rotateX(.6deg);
+  transition:transform var(--dur-slow) var(--ease-out);
+}
+.console:hover{transform:perspective(1400px) rotateY(0) rotateX(0)}
+.console-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  height:38px;padding:0 14px;border-bottom:1px solid var(--color-border);
+  font-family:var(--font-mono);font-size:10.5px;color:var(--color-faint);letter-spacing:.06em;
+}
+.console-bar .dots{display:flex;gap:6px;align-items:center}
+.console-bar .dots i{width:6px;height:6px;border-radius:50%;background:var(--color-border-strong);display:block}
+.console-bar .dots i.live{background:var(--color-accent);box-shadow:0 0 0 3px rgba(255,92,53,.14)}
+.console-body{padding:14px 16px 12px}
+.search{
+  display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;
+  border:1px solid var(--color-border);border-radius:var(--radius-sm);
+  background:rgba(233,237,243,.035);transition:border-color var(--dur-fast) var(--ease-out);
+}
+.search:focus-within{border-color:var(--color-accent)}
+.search svg{flex:none;width:15px;height:15px;stroke:var(--color-muted);fill:none;stroke-width:1.5}
+.search input{
+  flex:1;min-width:0;background:none;border:0;outline:0;
+  font-family:var(--font-body);font-size:12.5px;color:var(--color-text);
+}
+.search input::placeholder{color:var(--color-faint);opacity:1}
+.search .kbd{
+  font-family:var(--font-mono);font-size:10px;color:var(--color-muted);
+  border:1px solid var(--color-border-strong);border-radius:3px;padding:2px 6px;flex:none;
+}
+.app-grid{
+  display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:10px 6px;margin:16px 0 14px;min-height:222px;align-content:start;
+}
+.app{
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px 2px 6px;
+  border:1px solid transparent;border-radius:var(--radius-md);
+  background:none;min-height:66px;width:100%;
+  transition:transform var(--dur-fast) var(--ease-out),
+             border-color var(--dur-fast) var(--ease-out),background-color var(--dur-fast) var(--ease-out);
+}
+.app:hover{transform:translateY(-3px);background:rgba(233,237,243,.045);border-color:var(--color-border)}
+.app[aria-pressed="true"]{border-color:var(--color-accent);background:rgba(255,92,53,.07)}
+.app-glyph{
+  width:38px;height:38px;border-radius:9px;display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:-.02em;
+  color:#DCE4EF;border:1px solid rgba(233,237,243,.09);
+  box-shadow:var(--shadow-1);
+}
+.app-name{
+  font-size:10.5px;line-height:1.2;color:var(--color-muted);text-align:center;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.app[aria-pressed="true"] .app-name{color:var(--color-text)}
+.empty-result{
+  grid-column:1/-1;min-height:222px;display:grid;place-content:center;text-align:center;
+  font-family:var(--font-mono);font-size:11.5px;color:var(--color-faint);gap:8px;
+}
+.empty-result strong{color:var(--color-muted);font-weight:500}
+.console-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding-top:11px;border-top:1px solid var(--color-border);
+  font-family:var(--font-mono);font-size:10.5px;color:var(--color-faint);
+}
+/* 视觉是 8px 短条，命中区却是 44×44；负 margin 抵掉多出的布局高度 */
+.dots-nav{display:flex;gap:0;align-items:center;margin:-18px 0;position:relative;z-index:1}
+.dot-btn{position:relative;width:44px;height:44px;flex:none;border-radius:var(--radius-sm)}
+.dot-btn::before{
+  content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:22px;height:8px;border-radius:99px;background:rgba(233,237,243,.26);
+  transition:width var(--dur-base) var(--ease-out),background-color var(--dur-fast) var(--ease-out);
+}
+.dot-btn:hover::before{background:rgba(233,237,243,.5)}
+.dot-btn[aria-current="true"]::before{width:14px;background:var(--color-text)}
+.console-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.console-status b{color:var(--color-accent);font-weight:500}
+.console-hint{
+  margin-top:10px;font-family:var(--font-mono);font-size:10px;color:var(--color-faint);
+  letter-spacing:.02em;
+}
+.console-hint kbd{border:1px solid var(--color-border-strong);border-radius:3px;padding:1px 5px;color:var(--color-muted)}
+
+/* ---------- 快捷键跑马灯（破格元素） ---------- */
+.ticker{
+  border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);
+  overflow:hidden;background:var(--color-surface);position:relative;z-index:1;
+}
+.ticker::before,.ticker::after{
+  content:"";position:absolute;top:0;bottom:0;width:80px;z-index:2;pointer-events:none;
+}
+.ticker::before{left:0;background:linear-gradient(to right,var(--color-surface),transparent)}
+.ticker::after{right:0;background:linear-gradient(to left,var(--color-surface),transparent)}
+.ticker-track{display:flex;width:max-content;animation:marquee 38s linear infinite}
+.ticker:hover .ticker-track{animation-play-state:paused}
+.ticker-set{display:flex;align-items:center;gap:0;padding:14px 0;flex:none}
+.ticker-item{
+  display:inline-flex;align-items:center;gap:10px;padding:0 28px;
+  font-family:var(--font-mono);font-size:11.5px;color:var(--color-muted);white-space:nowrap;
+  border-right:1px solid var(--color-border);
+}
+.ticker-item kbd{
+  color:var(--color-text);border:1px solid var(--color-border-strong);
+  border-radius:3px;padding:3px 8px;font-size:10.5px;letter-spacing:.02em;
+}
+.ticker-item .sep{color:var(--color-accent)}
+@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+
+/* ---------- chapters ---------- */
+.chapters{padding-block:var(--space-8) var(--space-6)}
+.chapter{
+  display:grid;grid-template-columns:132px minmax(0,1fr);
+  gap:clamp(24px,4vw,64px);padding-block:var(--space-7);
+  border-top:1px solid var(--color-border);
+}
+.chapter-index{position:relative}
+.chapter-index .num{
+  position:sticky;top:104px;display:block;
+  font-family:var(--font-mono);font-size:var(--step-4);font-weight:500;
+  letter-spacing:-.04em;color:var(--color-faint);
+}
+.chapter-index .num::after{
+  content:"";display:block;width:24px;height:2px;margin-top:14px;background:var(--color-accent);
+}
+.chapter-index .tag{
+  position:sticky;top:180px;display:block;margin-top:16px;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;
+  color:var(--color-faint);text-transform:uppercase;
+}
+.chapter h2{
+  font-family:var(--font-display);font-weight:600;
+  font-size:clamp(1.8rem,3.4vw,2.9rem);letter-spacing:-.035em;line-height:1.12;
+  margin:0 0 var(--space-3);
+}
+.chapter .intro{max-width:62ch;color:var(--color-muted);margin:0 0 var(--space-5);font-size:var(--step-0)}
+
+/* 行列表：发丝线替代卡片堆叠，hover 时编号变橙 */
+.rows{border-top:1px solid var(--color-border)}
+.row{
+  display:grid;grid-template-columns:44px minmax(0,1fr) minmax(120px,190px);
+  gap:var(--space-3);align-items:baseline;
+  padding:18px 8px 18px 0;border-bottom:1px solid var(--color-border);
+  transition:background-color var(--dur-fast) var(--ease-out),padding-left var(--dur-fast) var(--ease-out);
+}
+.row:hover{background:rgba(233,237,243,.028);padding-left:8px}
+.row .idx{font-family:var(--font-mono);font-size:11px;color:var(--color-faint);transition:color var(--dur-fast)}
+.row:hover .idx{color:var(--color-accent)}
+.row h3{font-size:var(--step-0);font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.row p{margin:0;color:var(--color-muted);font-size:var(--step--1);line-height:1.7}
+.row .val{
+  font-family:var(--font-mono);font-size:11px;color:var(--color-muted);
+  text-align:right;font-variant-numeric:tabular-nums;letter-spacing:.02em;
+}
+.row .val em{font-style:normal;color:var(--color-accent)}
+
+/* 参数读数带 —— 等宽大数字，全部来自真实设置范围 */
+.metrics{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+  border:1px solid var(--color-border);border-radius:var(--radius-md);
+  background:var(--color-surface);margin-bottom:var(--space-5);overflow:hidden;
+}
+.metric{padding:22px 20px;border-right:1px solid var(--color-border)}
+.metric:last-child{border-right:0}
+.metric .n{
+  display:block;font-family:var(--font-mono);font-size:clamp(1.5rem,2.6vw,2.2rem);
+  font-weight:500;letter-spacing:-.05em;color:var(--color-text);line-height:1.1;
+  font-variant-numeric:tabular-nums;
+}
+.metric .n small{font-size:.5em;color:var(--color-accent);letter-spacing:0;margin-left:2px}
+.metric .l{display:block;margin-top:8px;font-size:11px;color:var(--color-muted);letter-spacing:.02em}
+
+/* 快捷键表 */
+.keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 var(--space-6)}
+.key-row{
+  display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+  padding:11px 0;border-bottom:1px solid var(--color-border);
+}
+.key-row .desc{font-size:var(--step--1);color:var(--color-muted)}
+.key-row .combo{display:flex;gap:4px;flex:none}
+kbd{
+  font-family:var(--font-mono);font-size:11px;color:var(--color-text);
+  background:var(--color-surface-2);border:1px solid var(--color-border-strong);
+  border-bottom-width:2px;border-radius:4px;padding:3px 8px;line-height:1.4;
+  white-space:nowrap;
+}
+
+/* 构建区 —— 真实命令，不编造下载链接 */
+.terminal{
+  border:1px solid var(--color-border-strong);border-radius:var(--radius-md);
+  background:var(--color-surface);overflow:hidden;margin-bottom:var(--space-4);
+}
+.terminal-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 14px;border-bottom:1px solid var(--color-border);
+  font-family:var(--font-mono);font-size:10.5px;color:var(--color-faint);letter-spacing:.08em;
+}
+.copy-btn{
+  font-family:var(--font-mono);font-size:10.5px;color:var(--color-muted);
+  border:1px solid var(--color-border-strong);border-radius:3px;padding:5px 10px;
+  min-height:44px;transition:color var(--dur-fast),border-color var(--dur-fast);
+}
+.copy-btn:hover{color:var(--color-accent);border-color:var(--color-accent)}
+.copy-btn[data-state="done"]{color:var(--color-accent);border-color:var(--color-accent)}
+.terminal pre{
+  margin:0;padding:18px 20px;overflow-x:auto;
+  font-family:var(--font-mono);font-size:12.5px;line-height:2;color:var(--color-text);
+}
+.terminal pre .prompt{color:var(--color-accent);user-select:none}
+.terminal pre .cmt{color:var(--color-faint)}
+.tree{
+  font-family:var(--font-mono);font-size:11.5px;line-height:1.9;color:var(--color-muted);
+  padding:16px 20px;border-left:2px solid var(--color-accent);background:rgba(233,237,243,.022);
+}
+.tree b{color:var(--color-text);font-weight:500}
+.note{color:var(--color-muted);font-size:var(--step--1);max-width:66ch;margin:var(--space-4) 0 0}
+.note strong{color:var(--color-text);font-weight:600}
+
+/* ---------- footer ---------- */
+.site-foot{border-top:1px solid var(--color-border);padding-block:var(--space-6) var(--space-5);position:relative;z-index:1}
+.foot-grid{display:flex;flex-wrap:wrap;justify-content:space-between;gap:var(--space-4)}
+.foot-brand{font-family:var(--font-display);font-weight:600;font-size:var(--step-2);letter-spacing:-.035em}
+.foot-brand span{color:var(--color-accent)}
+.foot-meta{
+  display:flex;flex-wrap:wrap;gap:8px 24px;align-items:flex-end;
+  font-family:var(--font-mono);font-size:11px;color:var(--color-faint);letter-spacing:.03em;
+}
+.foot-rule{height:1px;background:var(--color-border);margin:var(--space-5) 0 var(--space-4)}
+.foot-bottom{
+  display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;
+  font-family:var(--font-mono);font-size:10.5px;color:var(--color-faint);letter-spacing:.04em;
+}
+.foot-bottom a{display:inline-flex;align-items:center;min-height:44px}
+.foot-bottom a:hover{color:var(--color-accent)}
+
+/* ---------- 编排好的入场序列（3–6 组，60–120ms 阶梯） ---------- */
+.reveal{opacity:0;transform:translateY(22px)}
+.reveal.in{
+  opacity:1;transform:none;
+  transition:opacity var(--dur-slow) var(--ease-out),transform var(--dur-slow) var(--ease-out);
+  transition-delay:calc(var(--i,0) * 90ms);
+}
+.reveal.in[data-i="1"]{transition-delay:90ms}
+.reveal.in[data-i="2"]{transition-delay:180ms}
+.reveal.in[data-i="3"]{transition-delay:270ms}
+.reveal.in[data-i="4"]{transition-delay:360ms}
+.reveal.in[data-i="5"]{transition-delay:450ms}
+
+/* ---------- 响应式：构成决策各有明确答案，不是简单堆叠 ---------- */
+@media(max-width:1000px){
+  .hero-grid{grid-template-columns:1fr;gap:var(--space-6)}
+  .hero-copy{max-width:38ch}
+  .console-wrap{max-width:640px}
+  .chapter{grid-template-columns:88px minmax(0,1fr)}
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metric:nth-child(2){border-right:0}
+  .metric:nth-child(-n+2){border-bottom:1px solid var(--color-border)}
+}
+@media(max-width:680px){
+  .hero{padding-block:var(--space-6) var(--space-5)}
+  h1{font-size:clamp(2.4rem,11vw,3.4rem)}
+  h1 .line2{padding-left:20px}
+  .hero-lede{font-size:var(--step-0)}
+  .app-grid{grid-template-columns:repeat(4,minmax(0,1fr));min-height:238px}
+  .empty-result{min-height:238px}
+  .console-wrap{padding-left:0}
+  .ruler{display:none}
+  .console{transform:none}
+  .console:hover{transform:none}
+  .chapter{grid-template-columns:1fr;gap:var(--space-3);padding-block:var(--space-6)}
+  .chapter-index{display:flex;align-items:center;gap:14px}
+  .chapter-index .num,.chapter-index .tag{position:static}
+  .chapter-index .num{font-size:var(--step-2)}
+  .chapter-index .num::after{width:14px;height:2px;margin:0}
+  .chapter-index .tag{margin:0}
+  .row{grid-template-columns:28px minmax(0,1fr);gap:var(--space-2)}
+  .row .val{grid-column:2;text-align:left;margin-top:6px}
+  .keys{grid-template-columns:1fr}
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ticker-item{padding:0 18px}
+  .head-inner{height:60px}
+  .chapters{padding-block:var(--space-6) var(--space-5)}
+}
+@media(max-width:380px){
+  .app-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .hero-actions .btn{width:100%}
+}
+
+/* ---------- 降级动效：全量关闭空间运动，保留状态反馈 ---------- */
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important}
+  .reveal{opacity:1;transform:none}
+  .console,.console:hover{transform:none}
+  .ticker-track{animation:none;transform:none}
+  .btn:hover,.app:hover,.row:hover{transform:none}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+<div class="atmosphere" aria-hidden="true"><div class="grid-overlay"></div></div>
+
+<header class="site-head">
+  <div class="shell head-inner">
+    <a class="brand" href="#top" aria-label="Gridora 首页">
+      <span class="brand-mark" aria-hidden="true"></span>Gridora
+    </a>
+    <nav class="head-nav" aria-label="页面导航">
+      <a href="#interaction">交互</a>
+      <a href="#control">掌控</a>
+      <a href="#keys">键盘</a>
+      <a href="#build">构建</a>
+      <span class="ver">v1.0 · macOS 14+</span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero shell" id="top" aria-labelledby="hero-title">
+    <span class="edge-label" aria-hidden="true">Scroll / 04 sections</span>
+    <div class="hero-grid">
+
+      <div class="hero-copy">
+        <div class="hero-kicker reveal" data-i="0">
+          <span class="bar" aria-hidden="true"></span>
+          <span class="eyebrow">SwiftUI + AppKit · 原生全屏启动台</span>
+        </div>
+        <h1 id="hero-title" class="reveal" data-i="1">启动台，<span class="line2">按你的规则。</span></h1>
+        <p class="hero-lede reveal" data-i="2">覆盖菜单栏与 Dock 的无边框窗口。保留 Launchpad 的拖拽手感与分页逻辑，
+          补上原版缺失的键盘、拼音搜索与可定制性。</p>
+        <div class="hero-actions reveal" data-i="3">
+          <button class="btn btn-primary" id="heroCopy" type="button">
+            <span aria-hidden="true">⌘</span> 复制构建命令 <span class="kbd-hint">./build.sh</span>
+          </button>
+          <a class="btn btn-ghost" href="#interaction">查看交互 <span aria-hidden="true">↓</span></a>
+        </div>
+        <div class="hero-meta reveal" data-i="4">
+          <span>纯 SPM，无 Xcode 工程</span>
+          <span>状态独立目录</span>
+          <span>ad-hoc 签名</span>
+        </div>
+      </div>
+
+      <!-- 记忆点：把产品本身摆进首屏。可搜索、可翻页、可选中。 -->
+      <div class="console-wrap reveal" data-i="5">
+        <div class="ruler" aria-hidden="true">
+          <span>00</span><span>01</span><span>02</span><span>03</span><span>04</span><span>05</span><span>06</span>
+        </div>
+        <div class="console" role="region" aria-label="Gridora 启动台交互演示">
+          <div class="console-bar">
+            <span>GRIDORA / 启动台 · 概念演示</span>
+            <span class="dots" aria-hidden="true"><i></i><i></i><i class="live"></i></span>
+          </div>
+          <div class="console-body">
+            <label class="search" for="appSearch">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+              <input id="appSearch" type="search" autocomplete="off" spellcheck="false"
+                     placeholder="输入字母或拼音，如 wx → 微信" aria-label="搜索应用，支持中文名、拼音全拼与首字母">
+              <span class="kbd" aria-hidden="true">/</span>
+            </label>
+            <div class="app-grid" id="appGrid" aria-live="polite"></div>
+            <div class="console-foot">
+              <div class="dots-nav" id="dotsNav" role="group" aria-label="切换页面"></div>
+              <span class="console-status" id="consoleStatus">选中 <b>—</b> · Return 打开</span>
+            </div>
+            <p class="console-hint">
+              试试输入 <kbd>wx</kbd> / <kbd>zd</kbd> / <kbd>code</kbd>，
+              点击页码点或按 <kbd>←</kbd> <kbd>→</kbd> 翻页
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-track" id="tickerTrack"></div>
+  </div>
+
+  <div class="shell chapters">
+
+    <!-- 01 -->
+    <section class="chapter" id="interaction" aria-labelledby="ch1">
+      <div class="chapter-index">
+        <span class="num">01</span><span class="tag">Interaction</span>
+      </div>
+      <div>
+        <h2 id="ch1">手感，是能算出来的</h2>
+        <p class="intro">所有指针交互由网格上的单个 <span class="mono">DragGesture</span> 驱动，
+          图标只负责悬停与右键菜单——从根上避免手势冲突。</p>
+        <div class="rows">
+          <div class="row"><span class="idx">01.1</span><div><h3>拖拽跟手</h3>
+            <p>拿起图标有放大、阴影与轻微倾斜；拖动时其余图标 iOS 式实时让位。</p></div>
+            <span class="val">DragGesture</span></div>
+          <div class="row"><span class="idx">01.2</span><div><h3>拖到中心＝合并，拖到间隙＝重排</h3>
+            <p>松手自动合成文件夹；合并目标在其槽位画白色圆环提示，可打开、重命名、解散、移出成员。</p></div>
+            <span class="val">中心 / <em>间隙</em></span></div>
+          <div class="row"><span class="idx">01.3</span><div><h3>合并判定用布局快照</h3>
+            <p>目标取自拖拽开始时的布局，不会在网格重排中从手下「逃跑」。</p></div>
+            <span class="val">dragBase</span></div>
+          <div class="row"><span class="idx">01.4</span><div><h3>自然滚动翻页</h3>
+            <p>触控板双指、鼠标滚轮都能翻页，带橡皮筋与回弹吸附；可切纵向滚动模式。</p></div>
+            <span class="val">横向 / 纵向</span></div>
+          <div class="row"><span class="idx">01.5</span><div><h3>拖到边缘自动翻页</h3>
+            <p>图标停在屏幕左右边缘 0.4 秒，自动翻到相邻页。</p></div>
+            <span class="val"><em>400</em> ms</span></div>
+          <div class="row"><span class="idx">01.6</span><div><h3>点空白回桌面</h3>
+            <p>点图标才打开 App，点空白处直接收起启动台——与 Launchpad 一致。</p></div>
+            <span class="val">Esc</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 -->
+    <section class="chapter" id="control" aria-labelledby="ch2">
+      <div class="chapter-index">
+        <span class="num">02</span><span class="tag">Control</span>
+      </div>
+      <div>
+        <h2 id="ch2">参数不是装饰，是真的能改</h2>
+        <p class="intro">设置改动即时生效并自动保存，写进独立目录的 <span class="mono">state.json</span>。
+          下面每个区间都来自设置面板的实际范围。</p>
+        <div class="metrics" aria-label="可定制参数范围">
+          <div class="metric"><span class="n">4–9</span><span class="l">每行图标数</span></div>
+          <div class="metric"><span class="n">3–7</span><span class="l">每页行数</span></div>
+          <div class="metric"><span class="n">78–118<small>%</small></span><span class="l">图标大小</span></div>
+          <div class="metric"><span class="n">0.4–2.0<small>×</small></span><span class="l">滚动速度</span></div>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="idx">02.1</span><div><h3>拼音搜索</h3>
+            <p>按任意字母直接进入搜索，支持中文名、拼音全拼与首字母（<span class="mono">wx</span> → 微信），方向键选择、Return 打开。</p></div>
+            <span class="val">⌘F / 字母</span></div>
+          <div class="row"><span class="idx">02.2</span><div><h3>隐藏不常用 App</h3>
+            <p>右键隐藏，或按闲置天数自动收进隐藏区；隐藏项不出现在网格和搜索里，恢复后受保护不再自动隐藏。</p></div>
+            <span class="val">⌘⇧H</span></div>
+          <div class="row"><span class="idx">02.3</span><div><h3>外观可调</h3>
+            <p>程序化极光背景（不读桌面文件、不弹权限框）；可选模糊桌面壁纸，模糊度与暗度独立可调，标签可隐藏。</p></div>
+            <span class="val">极光 / 壁纸</span></div>
+          <div class="row"><span class="idx">02.4</span><div><h3>分组式设置面板</h3>
+            <p>通用 / 外观 / 布局 / 应用位置 / 已隐藏 App / 关于 六类，浅色分组卡片，记住上次浏览位置。</p></div>
+            <span class="val">⌘,</span></div>
+          <div class="row"><span class="idx">02.5</span><div><h3>应用位置扩展</h3>
+            <p>可添加外置硬盘等自定义 App 目录，保存后自动重扫描；一键开机自启（SMAppService，macOS 14+）。</p></div>
+            <span class="val">SMAppService</span></div>
+          <div class="row"><span class="idx">02.6</span><div><h3>Dock 常显 · 多屏 · 失焦收起</h3>
+            <p>窗口层级位于 Dock 之下，网格为 Dock 留底部内边距；每次唤起按鼠标所在屏铺满，切到别的 App 自动隐藏。</p></div>
+            <span class="val">kCGDockWindowLevel=20</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 -->
+    <section class="chapter" id="keys" aria-labelledby="ch3">
+      <div class="chapter-index">
+        <span class="num">03</span><span class="tag">Keyboard</span>
+      </div>
+      <div>
+        <h2 id="ch3">手不用离开键盘</h2>
+        <p class="intro">方向键在网格中定位，Return / 空格打开；Home / End 到首尾，
+          ⌘1…⌘9 直接跳页。搜索框支持 ↑↓←→ 选择。</p>
+        <div class="keys">
+          <div class="key-row"><span class="desc">显示 / 隐藏启动台</span><span class="combo"><kbd>⌃⌥Space</kbd><kbd>F4</kbd></span></div>
+          <div class="key-row"><span class="desc">关闭 / 回桌面</span><span class="combo"><kbd>Esc</kbd></span></div>
+          <div class="key-row"><span class="desc">搜索</span><span class="combo"><kbd>字母</kbd><kbd>⌘F</kbd></span></div>
+          <div class="key-row"><span class="desc">打开选中项</span><span class="combo"><kbd>Return</kbd><kbd>Space</kbd></span></div>
+          <div class="key-row"><span class="desc">网格内移动选择</span><span class="combo"><kbd>↑↓←→</kbd><kbd>Tab</kbd></span></div>
+          <div class="key-row"><span class="desc">上一页 / 下一页</span><span class="combo"><kbd>PageUp</kbd><kbd>PageDown</kbd></span></div>
+          <div class="key-row"><span class="desc">首屏 / 末屏</span><span class="combo"><kbd>Home</kbd><kbd>End</kbd></span></div>
+          <div class="key-row"><span class="desc">跳到第 N 页</span><span class="combo"><kbd>⌘1</kbd>…<kbd>⌘9</kbd></span></div>
+          <div class="key-row"><span class="desc">设置</span><span class="combo"><kbd>⌘,</kbd></span></div>
+          <div class="key-row"><span class="desc">已隐藏的 App</span><span class="combo"><kbd>⌘⇧H</kbd></span></div>
+          <div class="key-row"><span class="desc">重新扫描应用</span><span class="combo"><kbd>⌘R</kbd></span></div>
+          <div class="key-row"><span class="desc">右键菜单</span><span class="combo"><kbd>打开</kbd><kbd>在访达中显示</kbd><kbd>隐藏</kbd></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 -->
+    <section class="chapter" id="build" aria-labelledby="ch4">
+      <div class="chapter-index">
+        <span class="num">04</span><span class="tag">Build</span>
+      </div>
+      <div>
+        <h2 id="ch4">从源码到全屏，两条命令</h2>
+        <p class="intro">当前以源码分发，没有在线安装包。<span class="mono">build.sh</span> 会组装
+          <span class="mono">.app</span>、写入 Info.plist、拷贝图标并做 ad-hoc 签名。</p>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span>zsh — LaunchOS-源代码</span>
+            <button class="copy-btn" id="cmdCopy" type="button" data-state="idle">复制</button>
+          </div>
+          <pre><code id="buildCmd"><span class="prompt">$</span> ./build.sh
+<span class="prompt">$</span> open build/Gridora.app
+<span class="cmt"># 或只编译：swift build</span></code></pre>
+        </div>
+        <div class="tree">
+          <b>Sources/LaunchOS/</b><br>
+          ├─ App/ &nbsp;&nbsp;&nbsp; Main.swift · AppDelegate.swift · GlobalHotKey.swift<br>
+          ├─ Model/ &nbsp;&nbsp; Models.swift · LauncherModel.swift · AppScanner.swift · StateStore.swift<br>
+          ├─ Views/ &nbsp;&nbsp; LauncherView / PagerView / TileView / 四个浮层 / 组件<br>
+          └─ Support/ DebugHarness.swift
+        </div>
+        <p class="note"><strong>要求</strong> macOS 14.0 及以上。应用扫描
+          <span class="mono">/Applications</span>、<span class="mono">/System/Applications</span>、
+          <span class="mono">~/Applications</span> 及自定义目录，跳过 LSUIElement 后台程序。
+          状态文件位于 <span class="mono">~/Library/Application Support/com.vex.launchos/state.json</span>，
+          删除该目录即可恢复首次启动状态。</p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="shell">
+    <div class="foot-grid">
+      <div class="foot-brand">Gridora<span>.</span></div>
+      <div class="foot-meta">
+        <span>v1.0 (1)</span><span>com.vex.launchos</span><span>macOS 14+</span>
+        <span>SwiftUI + AppKit</span>
+      </div>
+    </div>
+    <div class="foot-rule"></div>
+    <div class="foot-bottom">
+      <span>一个 Launchpad 复刻品，补上原版缺失的部分。</span>
+      <span><a href="#top">回到顶部 ↑</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- 应用数据：名称全部来自 macOS 常见应用，附拼音首字母/全拼 ---------- */
+  var PAGES = [
+    [["微信","WX","wx","weixin"],["访达","FD","fd","fangda"],["Safari","SF","safari","safari"],
+     ["信息","XX","xx","xinxi"],["邮件","YJ","yj","youjian"],["日历","RL","rl","rili"],
+     ["备忘录","BW","bwl","beiwanglu"],["照片","ZP","zp","zhaopian"],["音乐","YY","yy","yinyue"],
+     ["地图","DT","dt","ditu"],["时钟","SZ","sz","shizhong"],["天气","TQ","tq","tianqi"],
+     ["App Store","AS","store","appstore"],["系统设置","XT","xtsz","xitongshezhi"],["预览","YL","yl","yulan"],
+     ["文本编辑","WB","wbbj","wenbenbianji"],["终端","ZD","zd","zhongduan"],["活动监视器","HJ","hdjsq","huodongjianshiqi"]],
+    [["Xcode","XC","xcode","xcode"],["VS Code","VC","code","vscode"],["Figma","FG","figma","figma"],
+     ["Chrome","CH","chrome","chrome"],["Firefox","FX","firefox","firefox"],["Slack","SL","slack","slack"],
+     ["Notion","NT","notion","notion"],["Obsidian","OB","obsidian","obsidian"],["Raycast","RC","raycast","raycast"],
+     ["Alfred","AL","alfred","alfred"],["CleanShot","CS","cleanshot","cleanshot"],["Pixelmator","PX","pixelmator","pixelmator"],
+     ["Logic Pro","LP","logic","logicpro"],["Final Cut","FC","fc","finalcut"],["Keynote","KN","keynote","keynote"],
+     ["Pages","PG","pages","pages"],["Numbers","NM","numbers","numbers"],["GarageBand","GB","garageband","garageband"]],
+    [["磁盘工具","CP","cpgj","cipangongju"],["控制台","KZ","kzt","kongzhitai"],["字体册","ZT","ztc","zitice"],
+     ["脚本编辑器","JB","jbbjq","jiaobenbianjiqi"],["快捷指令","KJ","kjzl","kuaijiezhiling"],["模拟器","MN","mnq","moniqi"],
+     ["自动操作","ZD","zzcz","zidongcaozuo"],["色彩同步","SC","sctb","secaitongbu"],["QuickTime","QT","quicktime","quicktime"],
+     ["FaceTime","FT","facetime","facetime"],["播客","BK","bk","boke"],["图书","TS","ts","tushu"],
+     ["股市","GS","gs","gushi"],["家庭","JT","jt","jiating"],["新闻","XW","xw","xinwen"],
+     ["翻译","FY","fy","fanyi"],["语音备忘录","YY","yybwl","yuyinbeiwanglu"],["计算器","JS","jsq","jisuanqi"]]
+  ];
+  /* 冷调图标底色，不做彩色糖果；唯一暖色留给强调态 */
+  var GLYPHS = ["#2A3A50","#31465C","#28384B","#35485C","#2C3F55","#3A4A5E"];
+
+  var grid = document.getElementById("appGrid");
+  var nav = document.getElementById("dotsNav");
+  var input = document.getElementById("appSearch");
+  var status = document.getElementById("consoleStatus");
+  var page = 0, selected = null;
+
+  function renderDots(){
+    nav.innerHTML = "";
+    for(var i=0;i<PAGES.length;i++){
+      (function(n){
+        var b=document.createElement("button");
+        b.className="dot-btn"; b.type="button";
+        b.setAttribute("aria-label","第 "+(n+1)+" 页，共 "+PAGES.length+" 页");
+        b.setAttribute("aria-current", n===page ? "true":"false");
+        b.addEventListener("click",function(){ page=n; selected=null; render(); });
+        nav.appendChild(b);
+      })(i);
+    }
+  }
+
+  function render(){
+    var q = input.value.trim().toLowerCase();
+    var items = PAGES[page].filter(function(a){
+      if(!q) return true;
+      return a[0].toLowerCase().indexOf(q)>=0 || a[2].indexOf(q)>=0 || a[3].indexOf(q)>=0;
+    });
+    grid.innerHTML="";
+    if(!items.length){
+      var e=document.createElement("div");
+      e.className="empty-result";
+      e.innerHTML='<span>无匹配应用</span><strong>“'+escapeHTML(input.value.trim())+'”</strong><span>试试 wx / zd / code</span>';
+      grid.appendChild(e);
+    } else {
+      items.forEach(function(a,idx){
+        var b=document.createElement("button");
+        b.className="app"; b.type="button";
+        b.setAttribute("aria-label",a[0]);
+        b.setAttribute("aria-pressed", selected===a[0] ? "true":"false");
+        var g=document.createElement("span");
+        g.className="app-glyph"; g.style.background=GLYPHS[idx % GLYPHS.length];
+        g.textContent=a[1]; g.setAttribute("aria-hidden","true");
+        var n=document.createElement("span"); n.className="app-name"; n.textContent=a[0];
+        b.appendChild(g); b.appendChild(n);
+        b.addEventListener("click",function(){ selected=a[0]; render(); });
+        grid.appendChild(b);
+      });
+    }
+    var pageLabel=("0"+(page+1)).slice(-2)+" / "+("0"+PAGES.length).slice(-2);
+    status.innerHTML="选中 <b>"+(selected?escapeHTML(selected):"—")+"</b> · "+pageLabel;
+    Array.prototype.forEach.call(nav.children,function(d,i){
+      d.setAttribute("aria-current", i===page ? "true":"false");
+    });
+  }
+
+  function escapeHTML(s){
+    return String(s).replace(/[&<>"']/g,function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  input.addEventListener("input",function(){ selected=null; render(); });
+  document.addEventListener("keydown",function(e){
+    var typing = document.activeElement===input;
+    if(e.key==="/" && !typing){ e.preventDefault(); input.focus(); return; }
+    if(typing && e.key==="Escape"){ input.value=""; render(); input.blur(); return; }
+    if(!typing && (e.key==="ArrowLeft"||e.key==="ArrowRight")){
+      e.preventDefault(); selected=null;
+      page=(page+(e.key==="ArrowRight"?1:-1)+PAGES.length)%PAGES.length;
+      render();
+    }
+  });
+  renderDots(); render();
+
+  /* ---------- 快捷键跑马灯：复制一组即可无缝循环 ---------- */
+  var HOTKEYS=[["⌃⌥Space","唤起 / 隐藏"],["Esc","回桌面"],["⌘F","搜索"],["⌘1…⌘9","跳页"],
+    ["⌘,","设置"],["⌘⇧H","已隐藏 App"],["⌘R","重新扫描"],["PageUp / Down","翻页"],
+    ["Home / End","首屏 / 末屏"],["Return","打开选中项"]];
+  var setHTML="";
+  HOTKEYS.forEach(function(h){
+    setHTML+='<span class="ticker-item"><kbd>'+escapeHTML(h[0])+'</kbd><span class="sep">/</span>'+escapeHTML(h[1])+'</span>';
+  });
+  document.getElementById("tickerTrack").innerHTML=
+    '<div class="ticker-set">'+setHTML+'</div><div class="ticker-set">'+setHTML+'</div>';
+
+  /* ---------- 复制命令：带成功态，无静默失败 ---------- */
+  var CMD="./build.sh\nopen build/Gridora.app";
+  function copy(text,btn,okLabel){
+    var done=function(){
+      btn.textContent=okLabel; btn.dataset.state="done";
+      setTimeout(function(){ btn.textContent=btn.dataset.idle || "复制"; btn.dataset.state="idle"; },1800);
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done,function(){ fallback(); });
+    } else { fallback(); }
+    function fallback(){
+      var t=document.createElement("textarea"); t.value=text;
+      t.style.position="fixed"; t.style.opacity="0"; document.body.appendChild(t);
+      t.select();
+      try{ document.execCommand("copy"); done(); }
+      catch(err){ btn.textContent="请手动复制"; btn.dataset.state="error"; }
+      document.body.removeChild(t);
+    }
+  }
+  var cmdBtn=document.getElementById("cmdCopy");
+  cmdBtn.dataset.idle="复制";
+  cmdBtn.addEventListener("click",function(){ copy(CMD,cmdBtn,"已复制 ✓"); });
+  var heroBtn=document.getElementById("heroCopy");
+  var heroLabel=heroBtn.innerHTML;
+  heroBtn.addEventListener("click",function(){
+    copy(CMD,heroBtn,"已复制 ✓  ./build.sh");
+    setTimeout(function(){ heroBtn.innerHTML=heroLabel; },1800);
+  });
+
+  /* ---------- 编排好的入场 + 滚动触发（只动 opacity / transform） ---------- */
+  var reveals=document.querySelectorAll(".reveal");
+  if("IntersectionObserver" in window){
+    var io=new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting){ en.target.classList.add("in"); io.unobserve(en.target); }
+      });
+    },{threshold:.08,rootMargin:"0px 0px -40px 0px"});
+    reveals.forEach(function(el){ io.observe(el); });
+    /* 兜底：某些环境（后台标签、无头渲染、极端节流）不派发 IO 回调。
+       先只把视口附近的内容点亮，保留远处区块的滚动编排；
+       若 6 秒后 IO 依然没工作，无条件全部点亮，绝不让内容永久透明。 */
+    setTimeout(function(){
+      document.querySelectorAll(".reveal:not(.in)").forEach(function(el){
+        if(el.getBoundingClientRect().top < window.innerHeight*1.1) el.classList.add("in");
+      });
+    },2200);
+    setTimeout(function(){
+      document.querySelectorAll(".reveal:not(.in)").forEach(function(el){ el.classList.add("in"); });
+    },6000);
+  } else {
+    reveals.forEach(function(el){ el.classList.add("in"); });
+  }
+})();
+</script>
+</body>
+</html>
