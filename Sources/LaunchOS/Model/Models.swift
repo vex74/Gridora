@@ -569,6 +569,13 @@ struct DragState {
     var active: Bool
     var mergeTarget: String?
     var mergeSlot: Int?        // grid cell of the merge target in the drag-start snapshot
+    /// Index the dragged tile held when the drag began. The live make-way
+    /// preview shifts every other tile relative to this index.
+    var sourceIndex: Int?
+    /// Slot the dragged tile would land in, published only while the pointer
+    /// is over a gap (no merge target). `nil` means the grid stays frozen so a
+    /// merge target does not slide out from under the artwork.
+    var insertionSlot: Int?
     var velocity: CGFloat
     var lastLocation: CGPoint
 }
@@ -599,6 +606,9 @@ struct DragSemantics: Equatable {
     var targetID: String?
     var slot: Int?
     var page: Int?
+    var sourceIndex: Int?
+    /// nil while hovering a merge target: the grid must stay put then.
+    var insertionSlot: Int?
 }
 
 /// Published only when a drag starts / ends / changes page or merge target.
@@ -631,6 +641,10 @@ final class FolderDragInfo: ObservableObject {
     @Published var appID: String?
     @Published var folderID: String?
     @Published var outsidePanel = false
+    /// Slot (within the currently shown 3 × 3 page) the app would land on if
+    /// released inside the panel. Published only when the cell changes, so the
+    /// folder grid re-evaluates on cell crossings, not on every pointer event.
+    @Published var dropSlot: Int?
 }
 
 /// High-frequency pointer position. Only the floating icon layer subscribes,
