@@ -518,7 +518,7 @@ struct SettingsOverlay: View {
             }
 
             header(title: "液态玻璃",
-                   caption: "搜索框、搜索结果、文件夹面板、网格里缩小的文件夹图标，以及选中 / 悬停 App 时的高亮，全部共用这一组参数、同步变化。macOS 26 及以上使用系统玻璃材质，旧系统退回半透明材质。着色 0–75% / 圆角 6–36pt / 压暗 0–60%；圆角是面板的半径，搜索框按 58% 等比推导，高亮按图标尺寸等比缩放。")
+                   caption: "搜索框、搜索结果、文件夹面板、网格里缩小的文件夹图标、选中 / 悬停高亮，以及打开文件夹或搜索时铺满全屏的背景雾层，全部共用这一组参数、同步变化。雾层在主窗口与屏幕顶部菜单栏窗口上完全相同，不会出现上下色带。macOS 26 及以上使用系统玻璃材质，旧系统退回半透明材质。着色 0–75% / 圆角 6–36pt / 压暗 0–60%；圆角是面板的半径，搜索框按 58% 等比推导，高亮按图标尺寸等比缩放。")
 
             card {
                 // All stages read the same group, so they always move together.
@@ -535,7 +535,7 @@ struct SettingsOverlay: View {
                     .padding(.vertical, 10)
                 divider
                 toggleRow(title: "使用液态玻璃",
-                          subtitle: "关闭后搜索、文件夹面板、文件夹图标与选中高亮一起回到原来的实底样式",
+                          subtitle: "关闭后搜索、文件夹面板、文件夹图标、选中高亮与全屏雾层一起退回原来的实底与压暗",
                           isOn: $model.settings.glassEnabled)
                 divider
                 segmentedRow(title: "玻璃风格",
