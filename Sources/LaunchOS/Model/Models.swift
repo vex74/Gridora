@@ -262,6 +262,20 @@ struct Settings: Codable, Equatable {
     /// Dimming behind the glass; replaces the old hard-coded 0.26 black scrim.
     var searchScrim: Double = Settings.defaultSearchScrim
 
+    /// macOS 26+ Liquid Glass for the open folder panel. Independent of the
+    /// search surface: the folder is far larger, carries white labels and has
+    /// its own 24 pt panel radius, so it ships with a deeper tint. All five
+    /// values are adjustable in Settings ▸ Appearance, and toggling it off
+    /// restores the original near-black panel. Old state files have none of
+    /// these keys and get the new glass look.
+    var folderGlassEnabled: Bool = true
+    var folderGlassStyle: SearchGlassStyle = .regular
+    var folderGlassTint: Double = Settings.defaultFolderGlassTint
+    var folderGlassRadius: Double = Settings.defaultFolderGlassRadius
+    /// Dimming of the full-screen sheet behind the folder panel; replaces the
+    /// old hard-coded 0.28 black scrim.
+    var folderGlassScrim: Double = Settings.defaultFolderGlassScrim
+
     /// User-recordable shortcuts. Old state files have none of these keys and
     /// get exactly the chords older builds hard-wired, so an upgrade never
     /// changes the keys a user already knows. `KeyChord` is the single source
@@ -285,6 +299,15 @@ struct Settings: Codable, Equatable {
     static let defaultSearchGlassRadius: Double = 14
     static let defaultSearchScrim: Double = 0.26
 
+    static let folderGlassTintRange: ClosedRange<Double> = 0...0.75
+    static let folderGlassRadiusRange: ClosedRange<Double> = 8...36
+    static let folderGlassScrimRange: ClosedRange<Double> = 0...0.60
+    /// The folder radius starts at the shared panel radius; AppearanceProbe
+    /// asserts the two never drift apart.
+    static let defaultFolderGlassRadius: Double = Double(DesignTokens.panelRadius)
+    static let defaultFolderGlassTint: Double = 0.38
+    static let defaultFolderGlassScrim: Double = 0.28
+
     /// Single source of truth for the icon-size slider. The upper bound is
     /// 140% because the cell headroom clamp in GridMetrics.iconSize already
     /// saturates at ~137% on an 8x7 grid; anything above that is a no-op.
@@ -299,6 +322,7 @@ struct Settings: Codable, Equatable {
         case wheelLines, launchAtLogin, extraFolders, wallpaperPath, gridInset, gridInsets, quitOnHide, showInDock
         case residencyChoiceVersion
         case searchGlassEnabled, searchGlassStyle, searchGlassTint, searchGlassRadius, searchScrim
+        case folderGlassEnabled, folderGlassStyle, folderGlassTint, folderGlassRadius, folderGlassScrim
         case launcherHotKey, previousPageHotKey, nextPageHotKey
         case searchHotKey, letterOpensSearch
     }
@@ -361,6 +385,20 @@ struct Settings: Codable, Equatable {
         searchScrim = clamp(try c.decodeIfPresent(Double.self, forKey: .searchScrim)
                             ?? Settings.defaultSearchScrim,
                             to: Settings.searchScrimRange)
+        folderGlassEnabled = try c.decodeIfPresent(Bool.self, forKey: .folderGlassEnabled) ?? true
+        // Same raw-string decode as the search surface: a corrupt style must
+        // not take down the whole state file.
+        let folderStyleRaw = try c.decodeIfPresent(String.self, forKey: .folderGlassStyle) ?? ""
+        folderGlassStyle = SearchGlassStyle(rawValue: folderStyleRaw) ?? .regular
+        folderGlassTint = clamp(try c.decodeIfPresent(Double.self, forKey: .folderGlassTint)
+                                ?? Settings.defaultFolderGlassTint,
+                                to: Settings.folderGlassTintRange)
+        folderGlassRadius = clamp(try c.decodeIfPresent(Double.self, forKey: .folderGlassRadius)
+                                  ?? Settings.defaultFolderGlassRadius,
+                                  to: Settings.folderGlassRadiusRange)
+        folderGlassScrim = clamp(try c.decodeIfPresent(Double.self, forKey: .folderGlassScrim)
+                                 ?? Settings.defaultFolderGlassScrim,
+                                 to: Settings.folderGlassScrimRange)
         // Shortcuts are resolved in priority order. A missing, corrupt or
         // colliding stored value falls back to that role's shipped default,
         // then to a safe alternate: no state file can leave two roles fighting

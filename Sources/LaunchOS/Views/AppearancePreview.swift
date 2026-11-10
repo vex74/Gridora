@@ -127,3 +127,141 @@ struct GlassPreviewStage: View {
         .modifier(SearchGlassPanel(settings: model.settings))
     }
 }
+
+// MARK: - Folder panel preview
+
+/// Deterministic description of the folder preview. `Settings` is the only
+/// input, so `--appearance-probe` can assert that every one of the five new
+/// sliders really reaches the rendered surface instead of trusting a copy of
+/// the formula.
+struct FolderGlassSnapshot: Equatable {
+    let enabled: Bool
+    let style: SearchGlassStyle
+    let tintPercent: Int
+    let radius: Int
+    let scrimPercent: Int
+
+    init(settings: Settings) {
+        enabled = settings.folderGlassEnabled
+        style = settings.folderGlassStyle
+        tintPercent = Int((settings.folderGlassTint * 100).rounded())
+        radius = Int(settings.folderGlassRadius.rounded())
+        scrimPercent = Int((settings.folderGlassScrim * 100).rounded())
+    }
+
+    var modeText: String { enabled ? "液态玻璃" : "近黑实底" }
+
+    var readout: String {
+        "\(style.label) · 着色 \(tintPercent)% · 圆角 \(radius)pt · 压暗 \(scrimPercent)%"
+    }
+}
+
+/// Inline preview for Settings ▸ Appearance ▸ 文件夹. The settings pane covers
+/// the real folder, so this miniature panel goes through the identical
+/// `FolderGlassPanel` modifier as the live folder overlay.
+struct FolderGlassPreviewStage: View {
+    @EnvironmentObject var model: LauncherModel
+
+    private var snapshot: FolderGlassSnapshot {
+        FolderGlassSnapshot(settings: model.settings)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("实时预览")
+                    .font(.system(size: DesignTokens.caption, weight: .medium))
+                    .foregroundStyle(DesignTokens.settingsMuted)
+                Spacer()
+                Text(snapshot.modeText)
+                    .font(.system(size: DesignTokens.micro, weight: .medium))
+                    .foregroundStyle(DesignTokens.settingsAccent)
+            }
+
+            stage
+                .frame(height: 132)
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.cardRadius,
+                                            style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DesignTokens.cardRadius,
+                                          style: .continuous)
+                    .stroke(DesignTokens.settingsHairline, lineWidth: DesignTokens.hairline))
+                .allowsHitTesting(false)
+
+            Text(snapshot.readout)
+                .font(.system(size: DesignTokens.caption).monospacedDigit())
+                .foregroundStyle(DesignTokens.settingsMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("文件夹外观实时预览：\(snapshot.modeText)，\(snapshot.readout)")
+    }
+
+    private var stage: some View {
+        ZStack {
+            DesignTokens.canvas
+            RadialGradient(colors: [DesignTokens.auroraCoolA.opacity(0.55), .clear],
+                           center: .topLeading, startRadius: 20, endRadius: 420)
+            // Mirrors the live sheet: glass needs less opaque dimming behind it.
+            Color.black.opacity(model.settings.folderGlassScrim
+                                * (model.settings.folderGlassEnabled ? 0.45 : 1.0))
+            folderPanel.frame(width: 208)
+        }
+    }
+
+    private var folderPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                previewButton("xmark")
+                Spacer(minLength: 4)
+                Text("文件夹")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("5 个 App")
+                    .font(.system(size: 6).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.35))
+                Spacer(minLength: 4)
+                previewButton("pencil")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+
+            Divider().overlay(.white.opacity(0.08))
+
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(38), spacing: 16), count: 3),
+                      spacing: 10) {
+                ForEach(0..<5, id: \.self) { i in
+                    VStack(spacing: 3) {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(.white.opacity(0.18 + Double(i) * 0.05))
+                            .frame(width: 24, height: 24)
+                        Text("App")
+                            .font(.system(size: 6))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(.white.opacity(i == 0 ? 0.9 : 0.28))
+                        .frame(width: 4, height: 4)
+                }
+            }
+            .padding(.bottom, 10)
+        }
+        .modifier(FolderGlassPanel(settings: model.settings))
+    }
+
+    private func previewButton(_ name: String) -> some View {
+        Circle()
+            .fill(.white.opacity(0.10))
+            .frame(width: 14, height: 14)
+            .overlay {
+                Image(systemName: name)
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+    }
+}

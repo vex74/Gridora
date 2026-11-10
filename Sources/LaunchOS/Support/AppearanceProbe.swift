@@ -101,6 +101,102 @@ enum AppearanceProbe {
         check("F pages", SettingsPage.allCases.count == 7 && SettingsPage.appearance.rawValue == "外观",
               "count=\(SettingsPage.allCases.count) appearance=\(SettingsPage.appearance.rawValue)")
 
+        // G. Folder glass must be independently adjustable. These are pure
+        // Settings -> snapshot checks plus a real JSON round-trip, not a
+        // look-alike that re-implements the decoding rules.
+        var base = Settings()
+        base.folderGlassEnabled = true
+        base.folderGlassStyle = .regular
+        base.folderGlassTint = Settings.defaultFolderGlassTint
+        base.folderGlassRadius = Settings.defaultFolderGlassRadius
+        base.folderGlassScrim = Settings.defaultFolderGlassScrim
+        let f1 = FolderGlassSnapshot(settings: base)
+        var g = base
+        g.folderGlassEnabled = false
+        g.folderGlassStyle = .clear
+        g.folderGlassTint = 0.62
+        g.folderGlassRadius = 32
+        g.folderGlassScrim = 0.50
+        let f2 = FolderGlassSnapshot(settings: g)
+        check("G1 tracksAllFive", f1 != f2 && !f2.enabled && f2.style == .clear
+              && f2.tintPercent == 62 && f2.radius == 32 && f2.scrimPercent == 50
+              && f2.modeText == "近黑实底" && f2.readout.contains("32pt"),
+              "f1=\(f1.readout) f2=\(f2.readout)")
+        check("G2 stable", FolderGlassSnapshot(settings: base) == f1,
+              "same Settings -> same snapshot=\(FolderGlassSnapshot(settings: base) == f1)")
+
+        var h = base
+        h.searchGlassEnabled = false
+        h.searchGlassStyle = .clear
+        h.searchGlassTint = 0.70
+        h.searchGlassRadius = 8
+        h.searchScrim = 0.60
+        check("G3 searchCannotMoveFolder",
+              FolderGlassSnapshot(settings: h) == f1
+              && GlassPreviewSnapshot(settings: h) != GlassPreviewSnapshot(settings: base),
+              "folderUnchanged=\(FolderGlassSnapshot(settings: h) == f1) "
+              + "searchChanged=\(GlassPreviewSnapshot(settings: h) != GlassPreviewSnapshot(settings: base))")
+        var i2 = base
+        i2.folderGlassTint = 0.60
+        i2.folderGlassRadius = 30
+        check("G4 folderCannotMoveSearch",
+              GlassPreviewSnapshot(settings: i2) == GlassPreviewSnapshot(settings: base),
+              "searchUnchanged=\(GlassPreviewSnapshot(settings: i2) == GlassPreviewSnapshot(settings: base))")
+
+        check("G5 defaultsAndRanges",
+              Settings.defaultFolderGlassRadius == Double(DesignTokens.panelRadius)
+              && Settings.defaultFolderGlassTint == 0.38
+              && Settings.defaultFolderGlassScrim == 0.28
+              && Settings.folderGlassTintRange == 0...0.75
+              && Settings.folderGlassRadiusRange == 8...36
+              && Settings.folderGlassScrimRange == 0...0.60,
+              "radius=\(Int(Settings.defaultFolderGlassRadius)) "
+              + "tint=\(f(Settings.defaultFolderGlassTint)) scrim=\(f(Settings.defaultFolderGlassScrim))")
+
+        do {
+            let encoded = try JSONEncoder().encode(g)
+            let decoded = try JSONDecoder().decode(Settings.self, from: encoded)
+            check("G6 stateRoundTrip",
+                  !decoded.folderGlassEnabled && decoded.folderGlassStyle == .clear
+                  && decoded.folderGlassTint == 0.62 && decoded.folderGlassRadius == 32
+                  && decoded.folderGlassScrim == 0.50,
+                  "enabled=\(decoded.folderGlassEnabled) style=\(decoded.folderGlassStyle.rawValue) "
+                  + "tint=\(f(decoded.folderGlassTint)) radius=\(Int(decoded.folderGlassRadius)) "
+                  + "scrim=\(f(decoded.folderGlassScrim))")
+
+            var raw = (try JSONSerialization.jsonObject(with: encoded)) as? [String: Any] ?? [:]
+            raw["folderGlassStyle"] = "bogus"
+            raw["folderGlassTint"] = 9.0
+            raw["folderGlassRadius"] = -4
+            raw["folderGlassScrim"] = 1.4
+            let bad = try JSONDecoder().decode(
+                Settings.self,
+                from: try JSONSerialization.data(withJSONObject: raw))
+            check("G7 corruptClamped",
+                  bad.folderGlassStyle == .regular && bad.folderGlassTint == 0.75
+                  && bad.folderGlassRadius == 8 && bad.folderGlassScrim == 0.60,
+                  "style=\(bad.folderGlassStyle.rawValue) tint=\(f(bad.folderGlassTint)) "
+                  + "radius=\(Int(bad.folderGlassRadius)) scrim=\(f(bad.folderGlassScrim))")
+
+            for key in ["folderGlassEnabled", "folderGlassStyle", "folderGlassTint",
+                        "folderGlassRadius", "folderGlassScrim"] {
+                raw.removeValue(forKey: key)
+            }
+            let legacy = try JSONDecoder().decode(
+                Settings.self,
+                from: try JSONSerialization.data(withJSONObject: raw))
+            check("G8 legacyUpgrade",
+                  legacy.folderGlassEnabled
+                  && legacy.folderGlassStyle == .regular
+                  && legacy.folderGlassTint == Settings.defaultFolderGlassTint
+                  && legacy.folderGlassRadius == Settings.defaultFolderGlassRadius
+                  && legacy.folderGlassScrim == Settings.defaultFolderGlassScrim,
+                  "enabled=\(legacy.folderGlassEnabled) tint=\(f(legacy.folderGlassTint)) "
+                  + "radius=\(Int(legacy.folderGlassRadius)) scrim=\(f(legacy.folderGlassScrim))")
+        } catch {
+            check("G6 stateRoundTrip", false, "JSON error=\(error)")
+        }
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")

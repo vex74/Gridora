@@ -124,6 +124,13 @@
 - 设置页「外观」新增约 6 行，固定 508pt 面板内容变高；滚动放行规则见上一节，`--settings-scroll-probe` 已复测 `hostedScrollViews=1`。
 - `--wheel-probe` 回归 `burst=1 / flick=1 / nudge=0 / big=1`，`--menubar-probe` 参数不变。
 
+## 文件夹面板液态玻璃（2026-11-10，用户指截图要求「这个地方也改成液态玻璃，可以调节」）
+- **范围**：`FolderOverlay` 的面板本体（原来挂 `PanelBackground` 近黑实底）。全屏 `.ultraThinMaterial` 遮罩、macOS 15 锚点展开、偏上 26pt、圆点页码保持不变。设置 → 外观新增独立一组「文件夹 · 液态玻璃」：开关、风格、着色 0–75%、圆角 8–36pt、背板压暗 0–60%、恢复默认，外加与真面板共用同一 modifier 的实时预览。
+- **唯一真源**：继续复用 `Views/SearchGlass.swift` 的 `SearchGlass.configuration`；新增 `FolderGlassPanel` 只做参数映射与三态回落（macOS 26 真 `glassEffect` / 旧系统 `.ultraThinMaterial` + 深色 tint / 关闭回 `PanelBackground`）。范围与默认值只在 `Settings.folderGlass*Range` 与 `defaultFolderGlass*`，`init(from:)` 统一 clamp；文件夹与搜索两组参数互不读写，`--appearance-probe` 的 G3/G4 双向断言覆盖这一点。
+- **取证**：`--folder-glass-probe` 驱动真入口 `model.openFolderID`（隔离 state 里必须有真实文件夹），A/B 的 layer 直方图 `backdrop 5→2 / portal 9→0` 才证明材质真的换了，只写布尔值不算。开与关各 1 秒帧采样 p95 均 6.50ms、jank 均 0%。全屏 scrim 继续持有 `.onTapGesture { close() }`；玻璃只挂在面板 VStack 上，不在 paging 路径里。
+- **性能**：旧/新 release 交替 4 轮翻页，old 中位 jank 0.80% / new 0.55%，p95 均 6.50ms，判无回归。文件夹玻璃只在文件夹打开时存在，不进入 165 个常驻 tile。
+- **state**：新增 5 个 settings 键，老 state 缺键一律升级为出厂默认；布局字段 `pages / hidden / manualHidden / pinned / usage` 不由本改动写入，云端同步只带布局、不带外观设置。
+
 ## 文件选择面板必须抬高窗口层级（2026-11-06，壁纸无法更换）
 - **铁证（同 SDK 最小 AppKit 实验）**：主窗口 `level=19`、菜单栏遮盖层 `statusWindow+1=26`，而 `NSOpenPanel.beginWithCompletionHandler:` 是 **modeless level-0 窗口**。实测 `main=19 cover=26 panelLevel=0 panelVisible=true panelKey=false nsappActive=false panelAboveMain=false panelAboveCover=false` → 面板确实创建了，但完全埋在启动台底下，点不到也输不进字，用户读作「按钮没反应」。把 `panel.level = statusWindow+2 (27)` 且先 `NSApp.activate(ignoringOtherApps: true)` → `panelLevel=27 panelKey=true nsappActive=true aboveMain=true aboveCover=true`。
 - **所有 NSOpenPanel / NSSavePanel 都必须走 `Support/FilePanels.swift`**：`prepare()` 设层级 + 激活 + 打开计数，`release()` 在 completion / runModal 返回后释放计数。当前 4 个调用点：选壁纸、备份布局、恢复布局、添加应用位置（后者用同步 `runModal()`）。新增调用点别再直接 `panel.begin`。

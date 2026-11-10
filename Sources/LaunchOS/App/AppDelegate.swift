@@ -134,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startSettingsScrollProbeIfNeeded()
         startMenuBarProbeIfNeeded()
         startSearchGlassProbeIfNeeded()
+        startFolderGlassProbeIfNeeded()
         startWallpaperPickerProbeIfNeeded()
         startSearchQueryProbeIfNeeded()
         startSearchRealUseProbeIfNeeded()
@@ -316,6 +317,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             lines.append("DONE")
                             try? (lines.joined(separator: "\n") + "\n")
                                 .write(toFile: "/tmp/launchos-search-glass.log", atomically: true, encoding: .utf8)
+                            NSApp.terminate(nil)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Diagnostic: `LaunchOS --folder-glass-probe` opens a REAL folder through
+    /// `model.openFolderID` (the same entry point a click uses) and A/B's the
+    /// folder glass switch. SwiftUI renders glass as CABackdropLayer +
+    /// SDFPortalLayer, so the layer-histogram delta is the evidence that the
+    /// panel really changed surface, not just that a setting was written.
+    /// Off by default; quits by itself. No screenshot is attempted.
+    private func startFolderGlassProbeIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("--folder-glass-probe") else { return }
+        let log = "/tmp/launchos-folder-glass.log"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            guard let self else { return }
+            self.model.settingsOpen = false
+            self.model.hiddenOpen = false
+            self.model.searchOpen = false
+            guard let folder = self.model.allFolders.first else {
+                try? "PROBE folder glass\nFAIL no folder in state\nDONE\n"
+                    .write(toFile: log, atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+            // Real entry point: PanelLayer sees openFolderID and renders
+            // FolderOverlay, which now owns FolderGlassPanel.
+            self.model.openFolderID = folder.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                guard let self else { return }
+                let s = self.model.settings
+                let onTree = self.treeClasses(in: self.window?.contentView)
+                let onCounts = self.glassLayerCounts(onTree)
+                var lines = [
+                    "PROBE folder liquid glass",
+                    "system=\(ProcessInfo.processInfo.operatingSystemVersionString)",
+                    "glassAvailable=\(SearchGlass.isAvailable)",
+                    "folderID=\(folder.id) members=\(folder.bundleIDs.count) "
+                        + "openFolderID=\(self.model.openFolderID ?? "nil") "
+                        + "resolved=\(self.model.folder(folder.id) != nil)",
+                    "enabled=\(s.folderGlassEnabled) style=\(s.folderGlassStyle.rawValue) "
+                        + "tint=\(s.folderGlassTint) radius=\(s.folderGlassRadius) scrim=\(s.folderGlassScrim)",
+                    "glassOn layers=\(onCounts)",
+                    "glassOn tree=\(self.classHistogram(onTree))"
+                ]
+                self.sampleFrames(for: 1.0) { onFrames in
+                    lines.append("glassOn frames \(onFrames)")
+                    self.model.settings.folderGlassEnabled = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                        guard let self else { return }
+                        let offTree = self.treeClasses(in: self.window?.contentView)
+                        let offCounts = self.glassLayerCounts(offTree)
+                        lines.append("glassOff layers=\(offCounts)")
+                        self.sampleFrames(for: 1.0) { offFrames in
+                            lines.append("glassOff frames \(offFrames)")
+                            let backdropOn = onTree.filter { $0.contains("CABackdropLayer") }.count
+                            let backdropOff = offTree.filter { $0.contains("CABackdropLayer") }.count
+                            let portalOn = onTree.filter { $0.contains("SDFPortalLayer") }.count
+                            let portalOff = offTree.filter { $0.contains("SDFPortalLayer") }.count
+                            lines.append("A/B backdrop \(backdropOn)->\(backdropOff) portal \(portalOn)->\(portalOff)")
+                            // A PASS needs a real drop in glass layers on the
+                            // same folder, otherwise an always-true check
+                            // would hide a modifier wired to the wrong key.
+                            let glassDelta = backdropOn > backdropOff || portalOn > portalOff
+                            lines.append(glassDelta ? "A/B PASS" : "A/B FAIL glass layers did not change")
+                            // Parameters must reach the rendered description.
+                            var tuned = self.model.settings
+                            tuned.folderGlassStyle = .clear
+                            tuned.folderGlassTint = 0.55
+                            tuned.folderGlassRadius = 30
+                            tuned.folderGlassScrim = 0.44
+                            let snap = FolderGlassSnapshot(settings: tuned)
+                            let tunedOK = snap.style == .clear && snap.tintPercent == 55
+                                && snap.radius == 30 && snap.scrimPercent == 44
+                            lines.append(tunedOK ? "params PASS \(snap.readout)"
+                                         : "params FAIL \(snap.readout)")
+                            // Real close path still works while the glass is off.
+                            self.model.openFolderID = nil
+                            lines.append(self.model.openFolderID == nil
+                                         ? "close PASS" : "close FAIL")
+                            self.model.settings.folderGlassEnabled = true
+                            lines.append(glassDelta && tunedOK ? "PASS" : "FAIL")
+                            lines.append("DONE")
+                            try? (lines.joined(separator: "\n") + "\n")
+                                .write(toFile: log, atomically: true, encoding: .utf8)
                             NSApp.terminate(nil)
                         }
                     }

@@ -86,3 +86,50 @@ struct SearchGlassScrim: View {
         .accessibilityHidden(true)
     }
 }
+
+/// The open-folder panel. It renders through the very same
+/// `SearchGlass.configuration` as the search surfaces — one mapping from
+/// Settings to system glass — but reads its own five values so a user can
+/// tune the large folder panel independently of the small search field.
+///
+/// Three explicit states, all testable:
+/// • macOS 26+ and enabled → real `glassEffect` (CABackdropLayer).
+/// • older macOS and enabled → ultra-thin material + dark tint, so the white
+///   folder labels stay readable instead of landing on a transparent view.
+/// • disabled → the original `PanelBackground` near-black solid panel.
+///
+/// The hairline stroke is shared with `PanelBackground`; the soft shadow only
+/// exists on the glass path so the panel still separates from the wallpaper.
+struct FolderGlassPanel: ViewModifier {
+    let settings: Settings
+
+    func body(content: Content) -> some View {
+        let radius = CGFloat(settings.folderGlassRadius)
+        if #available(macOS 26.0, *), settings.folderGlassEnabled {
+            let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+            content
+                .glassEffect(SearchGlass.configuration(style: settings.folderGlassStyle,
+                                                       tint: settings.folderGlassTint,
+                                                       interactive: true),
+                             in: shape)
+                .overlay { shape.stroke(.white.opacity(0.16), lineWidth: 0.8) }
+                .shadow(color: .black.opacity(0.35), radius: 32, y: 18)
+        } else {
+            content.background { fallbackSurface(radius: radius) }
+        }
+    }
+
+    @ViewBuilder
+    private func fallbackSurface(radius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        if settings.folderGlassEnabled {
+            ZStack {
+                shape.fill(.ultraThinMaterial)
+                shape.fill(Color.black.opacity(0.35 + settings.folderGlassTint * 0.5))
+            }
+            .overlay { shape.stroke(.white.opacity(0.16), lineWidth: 0.8) }
+        } else {
+            PanelBackground(cornerRadius: radius)
+        }
+    }
+}

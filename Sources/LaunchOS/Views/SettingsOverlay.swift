@@ -109,6 +109,11 @@ struct SettingsOverlay: View {
         .onChange(of: model.settings.searchGlassTint) { _, _ in model.persist() }
         .onChange(of: model.settings.searchGlassRadius) { _, _ in model.persist() }
         .onChange(of: model.settings.searchScrim) { _, _ in model.persist() }
+        .onChange(of: model.settings.folderGlassEnabled) { _, _ in model.persist() }
+        .onChange(of: model.settings.folderGlassStyle) { _, _ in model.persist() }
+        .onChange(of: model.settings.folderGlassTint) { _, _ in model.persist() }
+        .onChange(of: model.settings.folderGlassRadius) { _, _ in model.persist() }
+        .onChange(of: model.settings.folderGlassScrim) { _, _ in model.persist() }
         .onChange(of: model.settings.launcherHotKey) { _, _ in
             // The Carbon registration is owned by AppDelegate; changing the
             // stored value is enough, no restart or "apply" button needed.
@@ -558,6 +563,51 @@ struct SettingsOverlay: View {
                     model.settings.searchGlassTint = Settings.defaultSearchGlassTint
                     model.settings.searchGlassRadius = Settings.defaultSearchGlassRadius
                     model.settings.searchScrim = Settings.defaultSearchScrim
+                    model.persist()
+                }
+            }
+
+            header(title: "文件夹 · 液态玻璃",
+                   caption: "打开文件夹时面板本身的材质，与搜索分开调节。着色 0–75% / 圆角 8–36pt / 背板压暗 0–60%；关闭后回到原来的近黑实底。下方预览与参数同屏实时变化。")
+
+            card {
+                FolderGlassPreviewStage()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                divider
+                toggleRow(title: "打开文件夹时使用液态玻璃",
+                          subtitle: "面板透出背后的壁纸与网格，白字仍保持可读",
+                          isOn: $model.settings.folderGlassEnabled)
+                divider
+                segmentedRow(title: "玻璃风格",
+                             selection: $model.settings.folderGlassStyle)
+                divider
+                sliderRow(title: "着色浓度",
+                          valueText: "\(Int(model.settings.folderGlassTint * 100))%",
+                          value: $model.settings.folderGlassTint,
+                          range: Settings.folderGlassTintRange,
+                          under: ["通透", "", "浓"])
+                divider
+                sliderRow(title: "圆角",
+                          valueText: "\(Int(model.settings.folderGlassRadius)) pt",
+                          value: $model.settings.folderGlassRadius,
+                          range: Settings.folderGlassRadiusRange,
+                          step: 1,
+                          under: ["方正", "", "圆润"])
+                divider
+                sliderRow(title: "背板压暗",
+                          valueText: "\(Int(model.settings.folderGlassScrim * 100))%",
+                          value: $model.settings.folderGlassScrim,
+                          range: Settings.folderGlassScrimRange,
+                          under: ["轻", "默认", "深"])
+                divider
+                actionRow(title: "恢复默认文件夹玻璃",
+                          systemImage: "arrow.counterclockwise") {
+                    model.settings.folderGlassEnabled = true
+                    model.settings.folderGlassStyle = .regular
+                    model.settings.folderGlassTint = Settings.defaultFolderGlassTint
+                    model.settings.folderGlassRadius = Settings.defaultFolderGlassRadius
+                    model.settings.folderGlassScrim = Settings.defaultFolderGlassScrim
                     model.persist()
                 }
             }

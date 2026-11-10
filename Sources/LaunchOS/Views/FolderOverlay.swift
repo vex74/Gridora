@@ -57,7 +57,11 @@ struct FolderOverlay: View {
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
 
-                Color.black.opacity(folderDragInfo.outsidePanel ? 0.10 : 0.28)
+                // The dimming behind the glass panel is user-adjustable now;
+                // dragging out of the panel still thins it to 10% so the grid
+                // underneath stays visible as a drop target.
+                Color.black.opacity(folderDragInfo.outsidePanel
+                                    ? 0.10 : model.settings.folderGlassScrim)
                     .ignoresSafeArea()
                     .onTapGesture { close() }
 
@@ -76,7 +80,11 @@ struct FolderOverlay: View {
                     }
                 }
                 .frame(width: panelWidth)
-                .background(PanelBackground(cornerRadius: DesignTokens.panelRadius))
+                // One modifier owns all three surface states (system glass,
+                // material fallback, original near-black solid). The folder
+                // overlay is outside the paging subtree, so no glass layer
+                // ever enters the rasterised page cache.
+                .modifier(FolderGlassPanel(settings: model.settings))
                 .background(
                     GeometryReader { panel in
                         // A plain onAppear write, not a PreferenceKey: the
