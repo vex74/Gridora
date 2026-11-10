@@ -1599,8 +1599,8 @@ final class LauncherModel: ObservableObject {
             let now = ProcessInfo.processInfo.systemUptime
             let gap = now - folderWheelLastUptime
             folderWheelLastUptime = now
-            let pace = CGFloat(min(max(settings.scrollSpeed, 0.4), 2.0))
-            let burstWindow = TimeInterval(min(max(0.09 / pace, 0.05), 0.14))
+            let pace = PagingRules.pace(settings.scrollSpeed)
+            let burstWindow = PagingRules.burstWindow(pace: pace)
             let sameFlick = gap >= 0 && gap < burstWindow
                 && direction == folderWheelDirection
             if direction != folderWheelDirection {
@@ -1616,18 +1616,30 @@ final class LauncherModel: ObservableObject {
         }
 
         // One continuous gesture = at most one page turn. A new gesture may
-        // turn one more, but a single swipe can never stack two pages.
+        // turn one more, but a single swipe can never stack two pages. The
+        // threshold is the pager's own rule (`PagingRules.flickThreshold`),
+        // with the panel width standing in for the page extent, so a swipe
+        // that turns a page on the grid turns exactly one folder page too.
         if ended {
             folderGestureConsumed = false
             folderGestureAccum = 0
         }
         guard !folderGestureConsumed else { return }
         folderGestureAccum += abs(raw)
-        let threshold = CGFloat(min(max(90 / settings.scrollSpeed, 30), 160))
+        let threshold = PagingRules.flickThreshold(extent: folderPanelWidth,
+                                                   pace: PagingRules.pace(settings.scrollSpeed))
         guard folderGestureAccum >= threshold else { return }
         folderGestureAccum = 0
         folderGestureConsumed = true
         turnFolderPage(direction)
+    }
+
+    /// Width of the open folder panel, in points. Single source of truth: the
+    /// panel view sizes itself with this value and the wheel above uses it as
+    /// the page extent for `PagingRules.flickThreshold`, so drawing and input
+    /// can never disagree about how wide a folder page is.
+    var folderPanelWidth: CGFloat {
+        min(760, max(560, areaSize.width * 0.42))
     }
 
     /// While a panel owns the screen the wheel belongs to that panel's own
