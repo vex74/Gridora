@@ -319,6 +319,67 @@ enum AppearanceProbe {
               + "noGlass=\(ProbeConfig.folderIconNoGlass) "
               + "plate=\(ProbeConfig.folderIconPlate) noRaster=\(ProbeConfig.noRaster)")
 
+        // I. v1.6: the selection/hover highlight is the FOURTH surface driven
+        // by the same five glass keys. Before this, the main grid, search
+        // results and open folder each hard-coded a different white rounded
+        // rectangle (0.30 / 0.25 / 0.24 × icon size), so the glass sliders
+        // moved three surfaces but not the one the pointer rests on.
+        let sel0 = SelectionHighlightStyle(settings: base, iconSize: iconSize)
+        check("I1 defaultReproducesOriginalGrid",
+              abs(sel0.cornerRadius - iconSize * 0.27) < 0.001
+              && abs(sel0.hoverFill - 0.13) < 0.01
+              && abs(sel0.strokeOpacity - 0.82) < 0.01
+              && abs(sel0.labelFill - 0.16) < 0.01
+              // The 18 pt blur was the main grid's value at a 92 pt icon;
+              // it is proportional to icon size, so compare the ratio here.
+              && abs(sel0.glowBlur - iconSize * 0.20) < 0.001,
+              sel0.readout)
+
+        var iTint = base
+        iTint.glassTint = 0.70
+        let selTint = SelectionHighlightStyle(settings: iTint, iconSize: iconSize)
+        check("I2 oneSliderMovesFourSurfaces",
+              selTint != sel0
+              && FolderIconGlass(settings: iTint, size: iconSize) != icon0
+              && FolderGlassSnapshot(settings: iTint) != panel0
+              && GlassPreviewSnapshot(settings: iTint) != GlassPreviewSnapshot(settings: base),
+              "highlightChanged=\(selTint != sel0) tint=\(f(iTint.glassTint))")
+
+        var iRadius = base
+        iRadius.glassRadius = 6
+        let selTight = SelectionHighlightStyle(settings: iRadius, iconSize: iconSize)
+        iRadius.glassRadius = 36
+        let selRound = SelectionHighlightStyle(settings: iRadius, iconSize: iconSize)
+        check("I3 radiusClampedAndMonotonic",
+              selTight.cornerRadius >= iconSize * 0.10
+              && selRound.cornerRadius <= iconSize * 0.42
+              && selTight.cornerRadius < sel0.cornerRadius
+              && sel0.cornerRadius < selRound.cornerRadius,
+              "6pt=\(f(selTight.cornerRadius)) 24pt=\(f(sel0.cornerRadius)) "
+              + "36pt=\(f(selRound.cornerRadius))")
+
+        var iOff = base
+        iOff.glassEnabled = false
+        let selOff = SelectionHighlightStyle(settings: iOff, iconSize: iconSize)
+        check("I4 glassOffKeepsHighlightWithoutGlow",
+              !selOff.enabled && selOff.glowBlur == 0 && selOff.hoverScale == 1
+              && selOff.hoverFill > 0.05 && selOff != sel0,
+              selOff.readout)
+
+        check("I5 rollbackSwitchHonoured",
+              sel0.enabled == (base.glassEnabled && !ProbeConfig.selectionGlassDisabled),
+              "enabled=\(sel0.enabled) noSelectionGlass=\(ProbeConfig.selectionGlassDisabled)")
+
+        // The three call sites construct the value from the same Settings;
+        // there is no per-surface escape hatch and no second geometry formula.
+        let selGrid = SelectionHighlightStyle(settings: base, iconSize: 92)
+        let selFolder = SelectionHighlightStyle(settings: base, iconSize: 92)
+        let selSearch = SelectionHighlightStyle(settings: base, iconSize: 92)
+        check("I6 threeSurfacesShareOneValue",
+              selGrid == selFolder && selFolder == selSearch
+              && selGrid != SelectionHighlightStyle(settings: base, iconSize: 46),
+              "grid=\(selGrid.readout)")
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")
