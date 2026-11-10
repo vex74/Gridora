@@ -35,6 +35,54 @@ struct GlassIconButton: View {
 
 // MARK: - Page dots
 
+/// One page-dot strip for the whole app: the main grid and the open folder
+/// panel both render this exact component, so the pager chrome cannot drift
+/// apart. Geometry, hit target and animation live here only.
+struct PagingDots: View {
+    let count: Int
+    let index: Int
+    /// The main grid floats over the wallpaper and needs the capsule chrome;
+    /// the folder panel already sits on its own glass surface, where a second
+    /// capsule would just add noise. Dots stay pixel-identical either way.
+    var chrome: Bool = true
+    let onSelect: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ForEach(0..<count, id: \.self) { page in
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(page == index ? 0.95 : 0.30))
+                    .frame(width: page == index ? 22 : 7, height: 7)
+                    // The visible dot is 7 pt, but Launchpad's dots are
+                    // clickable. Keep a comfortable target without changing
+                    // the visual rhythm of the strip.
+                    .frame(width: 20, height: 32)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSelect(page) }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("第 \(page + 1) 页，共 \(count) 页")
+                    .accessibilityValue(page == index ? "当前页" : "")
+                    .accessibilityHint("跳到这一页")
+                    .accessibilityAddTraits(.isButton)
+                    .animation(Motion.snap, value: index)
+            }
+        }
+        .frame(height: 22)
+        .padding(.horizontal, chrome ? 14 : 0)
+        .padding(.vertical, chrome ? 5 : 0)
+        .background {
+            if chrome {
+                Capsule(style: .continuous).fill(.white.opacity(0.06))
+            }
+        }
+        .overlay {
+            if chrome {
+                Capsule(style: .continuous).stroke(.white.opacity(0.08), lineWidth: 0.5)
+            }
+        }
+    }
+}
+
 struct PageDots: View {
     @EnvironmentObject var model: LauncherModel
     /// Publishes only at page crossings, so the dots never subscribe to the
@@ -42,35 +90,8 @@ struct PageDots: View {
     @ObservedObject var pageState: PageState
 
     var body: some View {
-        HStack(spacing: 9) {
-            ForEach(0..<model.pageCount, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(index == pageState.index ? 0.95 : 0.30))
-                    .frame(width: index == pageState.index ? 22 : 7, height: 7)
-                    // The visible dot is 7 pt, but Launchpad's dots are
-                    // clickable. Keep a comfortable target without changing
-                    // the visual rhythm of the strip.
-                    .frame(width: 20, height: 32)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.goToPage(index)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("第 \(index + 1) 页，共 \(model.pageCount) 页")
-                    .accessibilityValue(index == pageState.index ? "当前页" : "")
-                    .accessibilityHint("跳到这一页")
-                    .accessibilityAddTraits(.isButton)
-                    .animation(Motion.snap, value: pageState.index)
-            }
-        }
-        .frame(height: 22)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .background {
-            Capsule(style: .continuous).fill(.white.opacity(0.06))
-        }
-        .overlay {
-            Capsule(style: .continuous).stroke(.white.opacity(0.08), lineWidth: 0.5)
+        PagingDots(count: model.pageCount, index: pageState.index) { page in
+            model.goToPage(page)
         }
     }
 }
