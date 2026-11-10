@@ -71,28 +71,139 @@ struct SearchGlassPanel: ViewModifier {
     }
 }
 
-/// Full-screen fog behind the search chrome. Sits above the click-catching
-/// scrim and is explicitly hit-test disabled, so clicking empty space still
-/// closes search exactly as before.
-struct SearchGlassScrim: View {
-    let settings: Settings
+// MARK: - Full-screen backdrop fog (one source for both windows)
+
+/// Which overlay owns the full-screen fog right now. The folder and search
+/// states have different dimming (dragging out of a folder thins it to 10%),
+/// but both must be described by the same value in BOTH windows.
+enum BackdropFogState: Equatable {
+    case none
+    case folder(outsidePanel: Bool)
+    case search
+}
+
+enum BackdropFogMaterial: String, Equatable {
+    case none
+    /// Pre-macOS-26 (or rollback): the original ultra-thin material.
+    case material
+    /// macOS 26+ real Liquid Glass, identical to search's old fog.
+    case glass
+}
+
+/// Pure value. The main window and the menu-bar cover are two different
+/// NSWindows (levels 19 and 26). Before v1.6.1 the main window drew
+/// `ultraThinMaterial` + a black scrim while the cover drew only the clean
+/// blurred wallpaper, producing a visible seam across the top of the screen.
+/// Every call site now constructs the SAME fog from the SAME five `glass*`
+/// settings, so tint, material and dimming cannot drift apart.
+struct BackdropFog: Equatable {
+    let active: Bool
+    /// Black dimming (and the click-catching layer in the main window).
+    let scrim: Double
+    /// Tint handed to the Liquid Glass fog.
+    let tint: Double
+    let material: BackdropFogMaterial
+
+    /// State mapping shared by the menu-bar cover and the diagnostics, so a
+    /// probe tests the real view's decision rather than a look-alike copy.
+    static func state(openFolderID: String?, searchOpen: Bool,
+                      outsidePanel: Bool) -> BackdropFogState {
+        if openFolderID != nil { return .folder(outsidePanel: outsidePanel) }
+        if searchOpen { return .search }
+        return .none
+    }
+
+    static func make(settings: Settings, state: BackdropFogState) -> BackdropFog {
+        let scrim: Double
+        let tint: Double
+        switch state {
+        case .none:
+            return BackdropFog(active: false, scrim: 0, tint: 0, material: .none)
+        case .folder(let outside):
+            // Dragging an app out of the panel thins the fog so the grid
+            // underneath stays visible as a drop target.
+            let base = outside ? 0.10 : settings.glassScrim
+            scrim = base
+            tint = base
+        case .search:
+            // Glass tints the backdrop by itself, so the opaque scrim is
+            // thinned while glass is on. Same slider, no second knob.
+            scrim = settings.glassEnabled
+                ? settings.glassScrim * 0.45
+                : settings.glassScrim
+            tint = settings.glassScrim
+        }
+
+        let material: BackdropFogMaterial
+        if !settings.glassEnabled {
+            material = .none
+        } else if SearchGlass.isAvailable && !ProbeConfig.noFogUnify {
+            material = .glass
+        } else {
+            material = .material
+        }
+        return BackdropFog(active: true, scrim: scrim, tint: tint,
+                           material: material)
+    }
+
+    /// The cover window is the only call site that may opt out; the rollback
+    /// intentionally restores the old unequal top strip.
+    var visibleOnCover: Bool { active && !ProbeConfig.noFogUnify }
+
+    var readout: String {
+        "active=\(active) scrim=\(String(format: "%.4f", scrim)) "
+            + "tint=\(String(format: "%.4f", tint)) "
+            + "material=\(material.rawValue) cover=\(visibleOnCover)"
+    }
+}
+
+/// The ONLY rendering exit for the full-screen fog. Three call sites:
+/// `FolderOverlay` (main window), `SearchOverlay` (main window) and
+/// `MenuBarCover` (separate window above the system menu bar). All three pass
+/// a `BackdropFog`, so no view can hand-roll its own material or dimming.
+///
+/// The glass layer is always hit-test inert. Only the main window supplies
+/// `onClose`, which makes the black scrim clickable to dismiss the panel;
+/// the cover window is `ignoresMouseEvents` at the NSWindow level anyway.
+struct BackdropFogSurface: View {
+    let fog: BackdropFog
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         Group {
+            if fog.active {
+                ZStack {
+                    glassLayer
+                        .allowsHitTesting(false)
+                    Color.black.opacity(fog.scrim)
+                        .onTapGesture { onClose?() }
+                        // Last modifier wins: with no close action (the cover
+                        // window) the whole scrim stays click-through.
+                        .allowsHitTesting(onClose != nil)
+                }
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var glassLayer: some View {
+        switch fog.material {
+        case .none:
+            EmptyView()
+        case .material:
+            Rectangle().fill(.ultraThinMaterial)
+        case .glass:
             if #available(macOS 26.0, *) {
                 Rectangle()
                     .fill(Color.black.opacity(0.001))
                     .glassEffect(SearchGlass.configuration(style: .clear,
-                                                          tint: settings.glassScrim,
-                                                          interactive: false),
+                                                           tint: fog.tint,
+                                                           interactive: false),
                                  in: Rectangle())
-            } else {
-                Rectangle().fill(.ultraThinMaterial)
             }
         }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 
