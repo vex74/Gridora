@@ -197,7 +197,8 @@ struct FolderOverlay: View {
                 FolderAppCell(app: app,
                               folderID: folderID,
                               grid: g,
-                              slot: slot)
+                              slot: slot,
+                              visibleCount: items.count)
                     .gesture(
                         DragGesture(minimumDistance: 6, coordinateSpace: .global)
                             .onChanged { value in
@@ -367,8 +368,15 @@ struct FolderAppCell: View {
     let folderID: String
     let grid: FolderGridMetrics
     let slot: Int
+    /// Number of apps actually shown on this folder page. `hoverIndex` uses
+    /// it so trailing empty slots never light up, exactly like `iconIndex`.
+    let visibleCount: Int
 
     @State private var hover = false
+
+    private var highlight: SelectionHighlightStyle {
+        SelectionHighlightStyle(settings: model.settings, iconSize: grid.iconSize)
+    }
 
     private var otherFolders: [Folder] {
         model.allFolders.filter { $0.id != folderID }
@@ -378,27 +386,18 @@ struct FolderAppCell: View {
     /// the same object the hit-test probe uses, so "click the icon" means the
     /// same rectangle in the panel and in the diagnostic.
     private var iconRect: CGRect {
-        let cell = grid.cellRect(at: slot)
-        let art = grid.iconRect(at: slot)
-        return CGRect(x: art.minX - cell.minX,
-                      y: art.minY - cell.minY,
-                      width: art.width,
-                      height: art.height)
+        grid.artworkLocalRect(at: slot)
     }
 
     var body: some View {
         let art = iconRect
         return ZStack(alignment: .topLeading) {
-            // Only this artwork square carries the tap gesture. The label,
-            // cell corners and row/column gaps are inert, matching the main
-            // grid's iconIndex(at:count:) rule.
+            // Only this artwork square carries the tap gesture AND the hover
+            // highlight. The label, cell corners and row/column gaps are
+            // inert, matching the main grid's iconIndex(at:count:) rule.
             ZStack {
-                if hover {
-                    RoundedRectangle(cornerRadius: grid.iconSize * 0.24, style: .continuous)
-                        .fill(.white.opacity(0.10))
-                        .frame(width: grid.iconSize * 1.16,
-                               height: grid.iconSize * 1.16)
-                }
+                SelectionHighlightSurface(style: highlight,
+                                          state: hover ? .hover : .none)
                 AppIconImage(app: app, size: grid.iconSize)
             }
             .frame(width: art.width, height: art.height)
@@ -419,8 +418,22 @@ struct FolderAppCell: View {
         }
         .frame(width: grid.cellWidth, height: grid.cellHeight)
         .opacity(folderDragInfo.appID == app.bundleID ? 0.22 : 1)
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
+        // NO `.contentShape(Rectangle())` and NO plain `.onHover` here. The
+        // v1.4 fix moved the tap onto the artwork but left both of these on
+        // the whole cell, so pointing at the label or a cell corner still lit
+        // the selection highlight — "range selection" came back. Hover is now
+        // gated by the SAME geometry the tap and the probe use; removing the
+        // whole-cell contentShape also stops it from widening the child's tap.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                let inside = grid.hoverIndex(atLocal: location, slot: slot,
+                                             count: visibleCount) == slot
+                if hover != inside { withAnimation(Motion.quick) { hover = inside } }
+            case .ended:
+                if hover { withAnimation(Motion.quick) { hover = false } }
+            }
+        }
         .contextMenu {
             Button("打开") { model.openFolderID = nil; model.launch(app) }
             Button("在访达中显示") {
