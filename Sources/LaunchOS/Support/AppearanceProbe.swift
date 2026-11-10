@@ -380,6 +380,83 @@ enum AppearanceProbe {
               && selGrid != SelectionHighlightStyle(settings: base, iconSize: 46),
               "grid=\(selGrid.readout)")
 
+        // J. v1.6.1: the full-screen fog is ONE value in TWO NSWindows.
+        // Before this the main window drew ultraThinMaterial + scrim while
+        // the menu-bar cover (level 26) drew only the clean wallpaper blur,
+        // so a visible seam ran across the top whenever a folder was open.
+        let folderState = BackdropFog.state(openFolderID: "probe-folder",
+                                            searchOpen: false,
+                                            outsidePanel: false)
+        let coverFog = BackdropFog.make(settings: base, state: folderState)
+        let gridFog = BackdropFog.make(settings: base,
+                                       state: .folder(outsidePanel: false))
+        check("J1 oneFogForBothWindows",
+              coverFog == gridFog && folderState == .folder(outsidePanel: false),
+              "cover=[\(coverFog.readout)] grid=[\(gridFog.readout)]")
+
+        var jScrim = base
+        jScrim.glassScrim = 0.55
+        let jFolder = BackdropFog.make(settings: jScrim,
+                                       state: .folder(outsidePanel: false))
+        let jCover = BackdropFog.make(settings: jScrim, state: folderState)
+        let jSearch = BackdropFog.make(settings: jScrim, state: .search)
+        check("J2 oneSliderMovesEveryFog",
+              jFolder != gridFog
+              && abs(jFolder.scrim - 0.55) < 0.0001
+              && abs(jFolder.tint - 0.55) < 0.0001
+              && jCover == jFolder
+              && abs(jSearch.tint - 0.55) < 0.0001
+              && abs(jSearch.scrim - 0.55 * 0.45) < 0.0001,
+              "folder=[\(jFolder.readout)] search=[\(jSearch.readout)]")
+
+        check("J3 sameMaterialOnAllStates",
+              jFolder.material == jSearch.material
+              && jSearch.material == jCover.material,
+              "material=\(jFolder.material.rawValue)")
+
+        var jOff = base
+        jOff.glassEnabled = false
+        let jOffFog = BackdropFog.make(settings: jOff,
+                                       state: .folder(outsidePanel: false))
+        let jOffSearch = BackdropFog.make(settings: jOff, state: .search)
+        check("J4 glassOffDropsMaterialKeepsScrim",
+              jOffFog.material == .none && jOffSearch.material == .none
+              && abs(jOffFog.scrim - base.glassScrim) < 0.0001
+              && abs(jOffSearch.scrim - base.glassScrim) < 0.0001,
+              jOffFog.readout)
+
+        let jOutside = BackdropFog.make(settings: base,
+                                        state: .folder(outsidePanel: true))
+        check("J5 outsidePanelThinsFog",
+              abs(jOutside.scrim - 0.10) < 0.0001
+              && abs(jOutside.tint - 0.10) < 0.0001
+              && jOutside.material == gridFog.material,
+              jOutside.readout)
+
+        let jNone = BackdropFog.make(settings: base, state: .none)
+        check("J6 noPanelMeansNoFog",
+              !jNone.active && !jNone.visibleOnCover
+              && jNone.material == .none && jNone.scrim == 0,
+              jNone.readout)
+
+        check("J7 rollbackSwitchHonoured",
+              gridFog.visibleOnCover == !ProbeConfig.noFogUnify,
+              "cover=\(gridFog.visibleOnCover) noFogUnify=\(ProbeConfig.noFogUnify)")
+
+        // The fog adds no sixth setting: encoding must still emit exactly the
+        // five v1.5 glass keys. A second group would let the two windows drift.
+        do {
+            let data = try JSONEncoder().encode(base)
+            let raw = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let glassKeys = raw.keys.filter { $0.hasPrefix("glass") }.sorted()
+            check("J8 fogAddsNoSettingsKey",
+                  glassKeys == ["glassEnabled", "glassRadius", "glassScrim",
+                                "glassStyle", "glassTint"],
+                  "keys=\(glassKeys)")
+        } catch {
+            check("J8 fogAddsNoSettingsKey", false, "encode failed: \(error)")
+        }
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")
