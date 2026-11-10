@@ -930,4 +930,311 @@ extension LauncherModel {
         }
         debugLog("MERGE PROBE DONE")
     }
+
+    /// `--folder-interaction-probe`: drives the REAL model entry points behind
+    /// the four reported defects. Every case restores the starting layout, so
+    /// nothing depends on the order the groups run in. Always run with an
+    /// isolated LAUNCHOS_STATE_DIR. Writes a PASS/FAIL line per assertion to
+    /// /tmp/launchos-folder-interaction.log.
+    ///
+    /// A: artwork-only click hit test (was: whole cell launched an app)
+    /// B/C: in-folder reorder, same page and onto another folder page
+    /// D: dragging out of the folder still works (old regression)
+    /// E: wheel turns folder pages with physical-flick coalescing
+    /// F: arrow keys / configured chords address the folder, not the pager
+    /// G: the grid's live make-way preview matches the committed reorder,
+    ///    and stays frozen while a merge target is highlighted
+    /// H: closing a folder resets its page and returns the wheel to the pager
+    func runFolderInteractionProbe(consume: (Bool, Bool, Bool, Bool) -> Bool) {
+        let logPath = "/tmp/launchos-folder-interaction.log"
+        try? FileManager.default.removeItem(atPath: logPath)
+        var lines: [String] = ["PROBE folder interaction liveReflow=\(ProbeConfig.liveReflow ? 1 : 0)"]
+        func note(_ text: String) { lines.append(text) }
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            note("\(ok ? "PASS" : "FAIL") \(label) \(detail)")
+        }
+        defer {
+            note("FOLDER INTERACTION PROBE DONE")
+            try? (lines.joined(separator: "\n") + "\n")
+                .write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+
+        let original = pages
+        let savedInsets = settings.gridInsets
+        // Regression probes must run against a REAL layout: the merge bug was
+        // invisible on a zero-inset state. These are the user's actual values.
+        settings.gridInsets = GridInsets(top: 0.098, left: 0.18,
+                                         bottom: 0.098, right: 0.18)
+        pagerFrameInWindow = CGRect(x: 0, y: 0,
+                                    width: areaSize.width, height: areaSize.height)
+        func restore() {
+            pages = original
+            openFolderID = nil
+            folderDragInfo.dropSlot = nil
+            press = nil
+            drag = nil
+            dragInfo.value = DragSemantics()
+            cancelEdgeFlip()
+            resetFolderWheel()
+        }
+        func members(_ id: String) -> [String] {
+            locate(id)?.1.folder?.bundleIDs ?? []
+        }
+        // A fixed id keeps every group pointed at the same folder, so each
+        // restore() really is independent of the previous group.
+        func makeFolder(_ count: Int, id: String) -> [String]? {
+            let ids = Array(original[0].prefix(count)).compactMap { $0.bundleID }
+            guard ids.count == count else { return nil }
+            let f = Folder(id: id, name: "探针", bundleIDs: ids)
+            var pg = original[0]
+            pg = [.makeFolder(f)] + Array(pg.dropFirst(count))
+            pages = [pg] + Array(original.dropFirst())
+            return ids
+        }
+
+        // A — click hit test. The pure geometry is also what FolderAppCell
+        // uses to position its artwork, so a hit here is a hit in the panel.
+        let g = FolderGridMetrics(cellWidth: (600 - 88) / 3,
+                                  cellHeight: 92 + 54,
+                                  iconSize: 92)
+        let art4 = g.iconRect(at: 4)
+        let iconHit = CGPoint(x: art4.midX, y: art4.midY)
+        let labelHit = CGPoint(x: art4.midX, y: art4.maxY + 14)
+        let cell4 = g.cellRect(at: 4)
+        let cornerHit = CGPoint(x: cell4.minX + 2, y: cell4.maxY - 2)
+        let gapHit = CGPoint(x: g.cellRect(at: 0).maxX + 6,
+                             y: g.cellRect(at: 0).midY)
+        let art8 = g.iconRect(at: 8)
+        check("A1 icon center hits", g.iconIndex(at: iconHit, count: 9) == 4,
+              "got=\(g.iconIndex(at: iconHit, count: 9).map(String.init) ?? "nil")")
+        check("A2 label is inert", g.iconIndex(at: labelHit, count: 9) == nil)
+        check("A3 cell corner inert", g.iconIndex(at: cornerHit, count: 9) == nil)
+        check("A4 column gap inert", g.iconIndex(at: gapHit, count: 9) == nil)
+        check("A5 empty trailing slot inert",
+              g.iconIndex(at: CGPoint(x: art8.midX, y: art8.midY), count: 3) == nil)
+        check("A6 drop maps to a cell", g.slot(at: iconHit, count: 9) == 4)
+        check("A7 drop clamps to last shown",
+              g.slot(at: CGPoint(x: art8.midX, y: art8.midY), count: 3) == 2)
+
+        let folderID = "probe-folder-12"
+        let oneFolderID = "probe-folder-3"
+        guard let ids = makeFolder(12, id: folderID) else {
+            check("setup 12-app folder", false, "not enough apps on page 0")
+            settings.gridInsets = savedInsets
+            return
+        }
+        let gridFrame = CGRect(x: 200, y: 150,
+                               width: g.gridWidth, height: g.gridHeight)
+        let panelFrame = gridFrame.insetBy(dx: -40, dy: -70)
+
+        // B — reorder inside the folder, same page.
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        let bStart = g.iconCenter(at: 0, in: gridFrame)
+        let bDrop = g.iconCenter(at: 5, in: gridFrame)
+        beginFolderDrag(appID: ids[0], folderID: folderID, at: bStart)
+        updateFolderDrag(to: bDrop, panelFrame: panelFrame,
+                         gridFrame: gridFrame, grid: g)
+        check("B1 live drop slot", folderDragInfo.dropSlot == 5,
+              "slot=\(folderDragInfo.dropSlot.map(String.init) ?? "nil")")
+        let bReturned = endFolderDrag(at: bDrop, panelFrame: panelFrame,
+                                      gridFrame: gridFrame, grid: g)
+        let bAfter = members(folderID)
+        check("B2 release inside stays in folder", !bReturned && openFolderID == folderID)
+        check("B3 order changed", bAfter.count == 12 && bAfter[5] == ids[0],
+              "first=\(bAfter.first ?? "-") at5=\(bAfter.count > 5 ? bAfter[5] : "-")")
+        check("B4 no member lost", Set(bAfter) == Set(ids))
+
+        // C — reorder onto the second folder page (wheel/keys can turn the
+        // folder page while an app is being dragged).
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        setFolderPage(1)
+        let cDrop = g.iconCenter(at: 1, in: gridFrame)
+        beginFolderDrag(appID: ids[0], folderID: folderID, at: bStart)
+        updateFolderDrag(to: cDrop, panelFrame: panelFrame,
+                         gridFrame: gridFrame, grid: g)
+        _ = endFolderDrag(at: cDrop, panelFrame: panelFrame,
+                          gridFrame: gridFrame, grid: g)
+        let cAfter = members(folderID)
+        check("C1 cross-page drop lands on page 2",
+              cAfter.count == 12 && cAfter[10] == ids[0],
+              "at10=\(cAfter.count > 10 ? cAfter[10] : "-")")
+        check("C2 visible count of last page", folderVisibleCount(for: folderID) == 3)
+
+        // D — dropping outside the panel still moves the app onto the grid.
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        let outside = CGPoint(x: gridFrame.maxX + 400, y: gridFrame.maxY + 200)
+        beginFolderDrag(appID: ids[1], folderID: folderID, at: bStart)
+        updateFolderDrag(to: outside, panelFrame: panelFrame,
+                         gridFrame: gridFrame, grid: g)
+        let dDropped = endFolderDrag(at: outside, panelFrame: panelFrame,
+                                     gridFrame: gridFrame, grid: g)
+        check("D1 drag out", dDropped)
+        check("D2 member removed", !members(folderID).contains(ids[1]))
+        check("D3 app back on grid",
+              pages.flatMap { $0 }.contains { $0.bundleID == ids[1] })
+
+        // E — wheel. Real NSEvents, real handleFolderScroll entry point.
+        func emit(_ amount: Int32) {
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil,
+                                   units: .line, wheelCount: 2,
+                                   wheel1: amount, wheel2: 0, wheel3: 0),
+                  let event = NSEvent(cgEvent: cg) else { return }
+            handleFolderScroll(event)
+        }
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        setFolderPage(0)
+        resetFolderWheel()
+        emit(-3)
+        check("E1 one notch turns one folder page", folderPage == 1,
+              "page=\(folderPage)")
+        setFolderPage(0)
+        resetFolderWheel()
+        for _ in 1...4 { emit(-3) }
+        check("E2 burst is one physical flick", folderPage == 1,
+              "page=\(folderPage)")
+        resetFolderWheel()
+        emit(3)
+        check("E3 reverse responds immediately", folderPage == 0,
+              "page=\(folderPage)")
+        setFolderPage(0)
+        resetFolderWheel()
+        emit(3)
+        check("E4 lower bound clamps", folderPage == 0, "page=\(folderPage)")
+        setFolderPage(1)
+        resetFolderWheel()
+        emit(-3)
+        check("E5 upper bound clamps", folderPage == 1, "page=\(folderPage)")
+
+        restore()
+        if makeFolder(3, id: oneFolderID) != nil {
+            openFolderID = oneFolderID
+            setFolderPage(0)
+            resetFolderWheel()
+            emit(-3)
+            check("E6 single-page folder stays put", folderPage == 0,
+                  "page=\(folderPage)")
+        } else {
+            check("E6 single-page folder setup", false)
+        }
+        check("E7 folder claims wheel", consume(true, true, true, false))
+        check("E8 other panel wins", !consume(true, true, true, true))
+        check("E9 hidden window", !consume(false, true, true, false))
+        check("E10 no folder open", !consume(true, true, false, false))
+        check("E11 not key window", !consume(true, false, true, false))
+
+        // F — keyboard. debugKey drives the real handleKey entry point.
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        setFolderPage(0)
+        let pagerBefore = currentPage
+        debugKey(124)
+        check("F1 arrow right turns folder", folderPage == 1, "page=\(folderPage)")
+        debugKey(123)
+        check("F2 arrow left turns folder", folderPage == 0, "page=\(folderPage)")
+        debugKey(124, "", modifiers: .command)
+        check("F3 configured chord turns folder", folderPage == 1,
+              "page=\(folderPage)")
+        check("F4 pager untouched while folder open", currentPage == pagerBefore,
+              "pager=\(currentPage)")
+
+        // G — live make-way preview on the main grid, with REAL insets.
+        let m = metrics
+        restore()
+        pages = [Array(original[0].prefix(8))]
+        let gStart = m.iconCenter(of: 0)
+        let gGap = CGPoint(x: m.iconCenter(of: 4).x + m.cellW * 0.36,
+                           y: m.iconCenter(of: 4).y + m.cellH * 0.30)
+        pointerDown(at: gStart)
+        pointerDragged(from: gStart, to: CGPoint(x: gStart.x + 12, y: gStart.y + 12))
+        for step in 1...10 {
+            let t = CGFloat(step) / 10
+            pointerDragged(from: gStart,
+                           to: CGPoint(x: gStart.x + (gGap.x - gStart.x) * t,
+                                       y: gStart.y + (gGap.y - gStart.y) * t))
+        }
+        // The release point is authoritative. Force the same recomputation
+        // `pointerUp` performs so a throttled preview can never disagree with
+        // the committed reorder.
+        updateDrag(gGap, force: true)
+        let gInsertion = dragInfo.value.insertionSlot
+        let gSource = dragInfo.value.sourceIndex
+        check("G1 insertion slot published over gap",
+              gInsertion != nil && gSource == 0,
+              "slot=\(gInsertion.map(String.init) ?? "nil") source=\(gSource.map(String.init) ?? "nil")")
+        let tilesBefore = pages[0]
+        if let ins = gInsertion, let src = gSource {
+            var arranged = Array(repeating: "", count: tilesBefore.count)
+            for i in 0..<tilesBefore.count {
+                let shown = GridPage.previewIndex(index: i, active: true,
+                                                  source: src, insertion: ins)
+                if shown >= 0 && shown < arranged.count { arranged[shown] = tilesBefore[i].id }
+            }
+            pointerUp(at: gGap)
+            check("G2 preview equals committed reorder",
+                  arranged == pages[0].map(\.id),
+                  "preview=\(arranged.prefix(6)) committed=\(pages[0].map(\.id).prefix(6))")
+        } else {
+            pointerUp(at: gGap)
+        }
+
+        restore()
+        pages = [Array(original[0].prefix(8))]
+        let gTarget = m.iconCenter(of: 1)
+        pointerDown(at: gStart)
+        pointerDragged(from: gStart, to: CGPoint(x: gStart.x + 12, y: gStart.y + 12))
+        for step in 1...10 {
+            let t = CGFloat(step) / 10
+            pointerDragged(from: gStart,
+                           to: CGPoint(x: gStart.x + (gTarget.x - gStart.x) * t,
+                                       y: gStart.y + (gTarget.y - gStart.y) * t))
+        }
+        updateDrag(gTarget, force: true)
+        check("G3 grid frozen on merge target",
+              dragInfo.value.insertionSlot == nil && dragInfo.value.targetID != nil,
+              "slot=\(dragInfo.value.insertionSlot.map(String.init) ?? "nil") target=\(dragInfo.value.targetID ?? "nil")")
+        pointerUp(at: gTarget)
+
+        // G4 — the preview must actually advance *during* a slow drag, not
+        // only at the release point. 12 pt per step stays below the 36 pt
+        // pointer-teleport guard; letting the run loop turn between bursts
+        // lets the 0.10 s throttle publish its pending slot.
+        restore()
+        pages = [Array(original[0].prefix(8))]
+        pointerDown(at: gStart)
+        pointerDragged(from: gStart, to: CGPoint(x: gStart.x + 6, y: gStart.y + 6))
+        var seenSlots: Set<Int> = []
+        for step in 1...36 {
+            let p = CGPoint(x: gStart.x + CGFloat(step) * 12, y: gStart.y)
+            pointerDragged(from: gStart, to: p)
+            if let s = dragInfo.value.insertionSlot { seenSlots.insert(s) }
+            if step % 12 == 0 {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.13))
+            }
+        }
+        let gSlowEnd = CGPoint(x: gStart.x + 36 * 12, y: gStart.y)
+        updateDrag(gSlowEnd, force: true)
+        check("G4 preview advances during slow drag", seenSlots.count >= 2,
+              "slots=\(seenSlots.sorted())")
+        pointerUp(at: gSlowEnd)
+
+        // H — closing the folder restores the pager's ownership of the wheel.
+        restore()
+        _ = makeFolder(12, id: folderID)
+        openFolderID = folderID
+        setFolderPage(1)
+        openFolderID = nil
+        check("H1 folder page resets on close", folderPage == 0, "page=\(folderPage)")
+        check("H2 wheel returns to pager", !scrollBelongsToPanel)
+        restore()
+        settings.gridInsets = savedInsets
+    }
 }
