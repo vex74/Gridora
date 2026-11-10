@@ -104,16 +104,11 @@ struct SettingsOverlay: View {
             NSApp.setActivationPolicy(on ? .regular : .accessory)
             model.persist()
         }
-        .onChange(of: model.settings.searchGlassEnabled) { _, _ in model.persist() }
-        .onChange(of: model.settings.searchGlassStyle) { _, _ in model.persist() }
-        .onChange(of: model.settings.searchGlassTint) { _, _ in model.persist() }
-        .onChange(of: model.settings.searchGlassRadius) { _, _ in model.persist() }
-        .onChange(of: model.settings.searchScrim) { _, _ in model.persist() }
-        .onChange(of: model.settings.folderGlassEnabled) { _, _ in model.persist() }
-        .onChange(of: model.settings.folderGlassStyle) { _, _ in model.persist() }
-        .onChange(of: model.settings.folderGlassTint) { _, _ in model.persist() }
-        .onChange(of: model.settings.folderGlassRadius) { _, _ in model.persist() }
-        .onChange(of: model.settings.folderGlassScrim) { _, _ in model.persist() }
+        .onChange(of: model.settings.glassEnabled) { _, _ in model.persist() }
+        .onChange(of: model.settings.glassStyle) { _, _ in model.persist() }
+        .onChange(of: model.settings.glassTint) { _, _ in model.persist() }
+        .onChange(of: model.settings.glassRadius) { _, _ in model.persist() }
+        .onChange(of: model.settings.glassScrim) { _, _ in model.persist() }
         .onChange(of: model.settings.launcherHotKey) { _, _ in
             // The Carbon registration is owned by AppDelegate; changing the
             // stored value is enough, no restart or "apply" button needed.
@@ -522,92 +517,52 @@ struct SettingsOverlay: View {
                           isOn: $model.settings.showLabels)
             }
 
-            header(title: "搜索 · 液态玻璃",
-                   caption: "macOS 26 及以上使用系统玻璃材质，旧系统退回半透明材质。着色 0–75% / 圆角 6–28pt / 压暗 0–60%；下方预览与参数同屏实时变化。")
+            header(title: "液态玻璃",
+                   caption: "搜索框、搜索结果、文件夹面板，以及网格里那个缩小的文件夹图标，全部共用这一组参数、同步变化。macOS 26 及以上使用系统玻璃材质，旧系统退回半透明材质。着色 0–75% / 圆角 6–36pt / 压暗 0–60%；圆角是面板的半径，搜索框按 58% 等比推导。")
 
             card {
+                // Both stages read the same group, so they always move together.
                 GlassPreviewStage()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 divider
-                toggleRow(title: "搜索时使用液态玻璃",
-                          subtitle: "关闭后回到原来的近黑搜索框与纯色背景",
-                          isOn: $model.settings.searchGlassEnabled)
-                divider
-                segmentedRow(title: "玻璃风格",
-                             selection: $model.settings.searchGlassStyle)
-                divider
-                sliderRow(title: "着色浓度",
-                          valueText: "\(Int(model.settings.searchGlassTint * 100))%",
-                          value: $model.settings.searchGlassTint,
-                          range: Settings.searchGlassTintRange,
-                          under: ["通透", "", "浓"])
-                divider
-                sliderRow(title: "圆角",
-                          valueText: "\(Int(model.settings.searchGlassRadius)) pt",
-                          value: $model.settings.searchGlassRadius,
-                          range: Settings.searchGlassRadiusRange,
-                          step: 1,
-                          under: ["方正", "", "圆润"])
-                divider
-                sliderRow(title: "背景压暗",
-                          valueText: "\(Int(model.settings.searchScrim * 100))%",
-                          value: $model.settings.searchScrim,
-                          range: Settings.searchScrimRange,
-                          under: ["轻", "默认", "深"])
-                divider
-                actionRow(title: "恢复默认玻璃设置",
-                          systemImage: "arrow.counterclockwise") {
-                    model.settings.searchGlassEnabled = true
-                    model.settings.searchGlassStyle = .regular
-                    model.settings.searchGlassTint = Settings.defaultSearchGlassTint
-                    model.settings.searchGlassRadius = Settings.defaultSearchGlassRadius
-                    model.settings.searchScrim = Settings.defaultSearchScrim
-                    model.persist()
-                }
-            }
-
-            header(title: "文件夹 · 液态玻璃",
-                   caption: "打开文件夹时的面板，以及网格里那个缩小的文件夹图标，共用这一组参数、同步变化。着色 0–75% / 圆角 8–36pt / 背板压暗 0–60%；关闭后两处都回到原来的实底。下方预览同时展示两处。")
-
-            card {
                 FolderGlassPreviewStage()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 divider
-                toggleRow(title: "文件夹使用液态玻璃",
-                          subtitle: "打开的面板与网格小图标一起变更，白字仍保持可读",
-                          isOn: $model.settings.folderGlassEnabled)
+                toggleRow(title: "使用液态玻璃",
+                          subtitle: "关闭后搜索、文件夹面板与文件夹图标一起回到原来的实底",
+                          isOn: $model.settings.glassEnabled)
                 divider
                 segmentedRow(title: "玻璃风格",
-                             selection: $model.settings.folderGlassStyle)
+                             selection: $model.settings.glassStyle)
                 divider
                 sliderRow(title: "着色浓度",
-                          valueText: "\(Int(model.settings.folderGlassTint * 100))%",
-                          value: $model.settings.folderGlassTint,
-                          range: Settings.folderGlassTintRange,
+                          valueText: "\(Int(model.settings.glassTint * 100))%",
+                          value: $model.settings.glassTint,
+                          range: Settings.glassTintRange,
                           under: ["通透", "", "浓"])
                 divider
                 sliderRow(title: "圆角",
-                          valueText: "\(Int(model.settings.folderGlassRadius)) pt",
-                          value: $model.settings.folderGlassRadius,
-                          range: Settings.folderGlassRadiusRange,
+                          valueText: "\(Int(model.settings.glassRadius)) pt",
+                          value: $model.settings.glassRadius,
+                          range: Settings.glassRadiusRange,
                           step: 1,
                           under: ["方正", "", "圆润"])
                 divider
-                sliderRow(title: "背板压暗",
-                          valueText: "\(Int(model.settings.folderGlassScrim * 100))%",
-                          value: $model.settings.folderGlassScrim,
-                          range: Settings.folderGlassScrimRange,
+                sliderRow(title: "压暗",
+                          valueText: "\(Int(model.settings.glassScrim * 100))%",
+                          value: $model.settings.glassScrim,
+                          range: Settings.glassScrimRange,
                           under: ["轻", "默认", "深"])
                 divider
-                actionRow(title: "恢复默认文件夹玻璃",
+                actionRow(title: "恢复默认玻璃设置",
                           systemImage: "arrow.counterclockwise") {
-                    model.settings.folderGlassEnabled = true
-                    model.settings.folderGlassStyle = .regular
-                    model.settings.folderGlassTint = Settings.defaultFolderGlassTint
-                    model.settings.folderGlassRadius = Settings.defaultFolderGlassRadius
-                    model.settings.folderGlassScrim = Settings.defaultFolderGlassScrim
+                    model.settings.glassEnabled = true
+                    model.settings.glassStyle = .regular
+                    model.settings.glassTint = Settings.defaultGlassTint
+                    model.settings.glassRadius = Settings.defaultGlassRadius
+                    model.settings.glassScrim = Settings.defaultGlassScrim
                     model.persist()
                 }
             }
