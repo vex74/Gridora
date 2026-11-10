@@ -140,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuBarProbeIfNeeded()
         startSearchGlassProbeIfNeeded()
         startFolderGlassProbeIfNeeded()
+        startBackdropFogProbeIfNeeded()
         startFolderIconGlassProbeIfNeeded()
         startFolderInteractionProbeIfNeeded()
         startWallpaperPickerProbeIfNeeded()
@@ -417,6 +418,151 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             }
+        }
+    }
+
+    /// Diagnostic: `LaunchOS --backdrop-fog-probe` opens a REAL folder through
+    /// `model.openFolderID` and dumps the layer trees of BOTH windows. The
+    /// menu-bar cover is a separate NSWindow at level 26, so a pure-value
+    /// assertion alone would be a look-alike green (the exact failure mode of
+    /// the old folder hover checks). The evidence is a CABackdropLayer that
+    /// actually appears in the cover's OWN view tree, and disappears when
+    /// glass is switched off. Off by default; quits by itself. No screenshot.
+    private func startBackdropFogProbeIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("--backdrop-fog-probe") else { return }
+        let log = "/tmp/launchos-backdrop-fog.log"
+        try? FileManager.default.removeItem(atPath: log)
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            self.model.settingsOpen = false
+            self.model.hiddenOpen = false
+            self.model.searchOpen = false
+            guard let folder = self.model.allFolders.first else {
+                try? "PROBE backdrop fog\nFAIL no folder in state\nDONE\n"
+                    .write(toFile: log, atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+
+            // Real entry point: PanelLayer renders FolderOverlay and the cover
+            // recomputes its fog from the same @Published openFolderID.
+            self.model.openFolderID = folder.id
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            var lines = [
+                "PROBE backdrop fog (one fog, two windows)",
+                "system=\(ProcessInfo.processInfo.operatingSystemVersionString)",
+                "glassAvailable=\(SearchGlass.isAvailable) rollback=\(ProbeConfig.noFogUnify)",
+                "folderID=\(folder.id) members=\(folder.bundleIDs.count) "
+                    + "openFolderID=\(self.model.openFolderID ?? "nil")",
+                "settings glassEnabled=\(self.model.settings.glassEnabled) "
+                    + "scrim=\(self.model.settings.glassScrim) "
+                    + "style=\(self.model.settings.glassStyle.rawValue)"
+            ]
+            var all = true
+            func check(_ name: String, _ ok: Bool, _ detail: String) {
+                lines.append((ok ? "PASS " : "FAIL ") + name + " " + detail)
+                if !ok { all = false }
+            }
+
+            let coverVisible = self.menuCover?.isVisible ?? false
+            let coverHasView = self.menuCover?.contentView != nil
+            check("B1 realEntryOpenedFolder",
+                  self.model.openFolderID == folder.id
+                    && self.model.folder(folder.id) != nil,
+                  "id=\(self.model.openFolderID ?? "nil")")
+            check("B2 coverWindowPresent", coverVisible && coverHasView,
+                  "visible=\(coverVisible) view=\(coverHasView) "
+                    + "level=\(self.menuCover?.level.rawValue ?? -1)")
+
+            let mainOn = self.treeClasses(in: self.window?.contentView)
+            let coverOn = self.treeClasses(in: self.menuCover?.contentView)
+            let mainBackdrop = mainOn.filter { $0.contains("CABackdropLayer") }.count
+            let coverBackdrop = coverOn.filter { $0.contains("CABackdropLayer") }.count
+            lines.append("glassOn main=\(self.glassLayerCounts(mainOn))")
+            lines.append("glassOn cover=\(self.glassLayerCounts(coverOn))")
+            lines.append("coverTree=\(self.classHistogram(coverOn))")
+
+            let rollback = ProbeConfig.noFogUnify
+            let glassOn = self.model.settings.glassEnabled
+            let expectCoverGlass = glassOn && !rollback && SearchGlass.isAvailable
+            check("B3 mainWindowFogRendered", mainBackdrop > 0,
+                  "backdrop=\(mainBackdrop)")
+            check("B4 coverWindowFogRendered",
+                  expectCoverGlass ? coverBackdrop > 0 : coverBackdrop == 0,
+                  "backdrop=\(coverBackdrop) expect=\(expectCoverGlass)")
+
+            // The cover's own state mapper must produce the SAME value the
+            // main window's FolderOverlay constructs.
+            let coverState = BackdropFog.state(
+                openFolderID: self.model.openFolderID,
+                searchOpen: self.model.searchOpen,
+                outsidePanel: self.model.folderDragInfo.outsidePanel)
+            let coverFog = BackdropFog.make(settings: self.model.settings,
+                                            state: coverState)
+            let mainFog = BackdropFog.make(
+                settings: self.model.settings,
+                state: .folder(outsidePanel: self.model.folderDragInfo.outsidePanel))
+            check("B5 oneFogForBothWindows", coverFog == mainFog,
+                  "cover=[\(coverFog.readout)] main=[\(mainFog.readout)]")
+
+            let outsideState = BackdropFog.state(
+                openFolderID: self.model.openFolderID, searchOpen: false,
+                outsidePanel: true)
+            let outsideFog = BackdropFog.make(settings: self.model.settings,
+                                              state: outsideState)
+            check("B6 outsidePanelThinsBoth",
+                  outsideState == .folder(outsidePanel: true)
+                    && abs(outsideFog.scrim - 0.10) < 0.0001
+                    && abs(outsideFog.tint - 0.10) < 0.0001,
+                  outsideFog.readout)
+
+            let searchFog = BackdropFog.make(settings: self.model.settings,
+                                             state: .search)
+            let expectedSearchScrim = glassOn
+                ? self.model.settings.glassScrim * 0.45
+                : self.model.settings.glassScrim
+            check("B7 searchSharesSameFog",
+                  abs(searchFog.scrim - expectedSearchScrim) < 0.0001
+                    && abs(searchFog.tint - self.model.settings.glassScrim) < 0.0001
+                    && searchFog.material == mainFog.material,
+                  searchFog.readout)
+
+            // A/B: turning glass off must remove the fog layers in BOTH trees.
+            self.model.settings.glassEnabled = false
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let mainOff = self.treeClasses(in: self.window?.contentView)
+            let coverOff = self.treeClasses(in: self.menuCover?.contentView)
+            let mainOffBackdrop = mainOff.filter { $0.contains("CABackdropLayer") }.count
+            let coverOffBackdrop = coverOff.filter { $0.contains("CABackdropLayer") }.count
+            lines.append("glassOff main=\(self.glassLayerCounts(mainOff))")
+            lines.append("glassOff cover=\(self.glassLayerCounts(coverOff))")
+            check("B8 glassOffRemovesBothFogs",
+                  mainOffBackdrop < mainBackdrop && coverOffBackdrop == 0,
+                  "main \(mainBackdrop)->\(mainOffBackdrop) "
+                    + "cover \(coverBackdrop)->\(coverOffBackdrop)")
+            let offFog = BackdropFog.make(settings: self.model.settings,
+                                          state: .folder(outsidePanel: false))
+            check("B9 glassOffHasNoMaterial", offFog.material == .none,
+                  offFog.readout)
+            self.model.settings.glassEnabled = true
+
+            // Closing the folder must deactivate the cover fog as well.
+            self.model.openFolderID = nil
+            let closedState = BackdropFog.state(openFolderID: nil,
+                                                searchOpen: false,
+                                                outsidePanel: false)
+            let closedFog = BackdropFog.make(settings: self.model.settings,
+                                             state: closedState)
+            check("B10 closeDeactivatesCover", !closedFog.visibleOnCover,
+                  closedFog.readout)
+
+            lines.append(all ? "PASS" : "FAIL")
+            lines.append("DONE")
+            try? (lines.joined(separator: "\n") + "\n")
+                .write(toFile: log, atomically: true, encoding: .utf8)
+            NSApp.terminate(nil)
         }
     }
 
@@ -1915,7 +2061,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.orderOut(nil)
         window.alphaValue = 0
 
-        let hosting = NSHostingView(rootView: MenuBarCover().environmentObject(model))
+        // The cover is a separate NSWindow; inject the same low-frequency
+        // drag state the main window uses so both fogs thin together while an
+        // app is dragged out of an open folder.
+        let hosting = NSHostingView(rootView: MenuBarCover()
+            .environmentObject(model)
+            .environmentObject(model.folderDragInfo))
         hosting.autoresizingMask = [.width, .height]
         window.contentView = hosting
 
