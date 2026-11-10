@@ -60,6 +60,18 @@ struct FolderGridMetrics: Equatable {
                       height: iconBox)
     }
 
+    /// Artwork square in a CELL'S local coordinates. `FolderAppCell` positions
+    /// its icon, its tap target and its hover highlight with exactly this rect;
+    /// no coordinate subtraction is re-derived in the view layer.
+    func artworkLocalRect(at slot: Int) -> CGRect {
+        let cell = cellRect(at: slot)
+        let art = iconRect(at: slot)
+        return CGRect(x: art.minX - cell.minX,
+                      y: art.minY - cell.minY,
+                      width: art.width,
+                      height: art.height)
+    }
+
     /// Strict launch hit test. Only the artwork square opens an app; the label,
     /// cell corners, row/column gaps and trailing empty cells are inert.
     func iconIndex(at point: CGPoint, count: Int) -> Int? {
@@ -69,6 +81,29 @@ struct FolderGridMetrics: Equatable {
             return slot
         }
         return nil
+    }
+
+    /// Hover hit test in a CELL'S LOCAL coordinates. `FolderAppCell`'s
+    /// `onContinuousHover` calls exactly this method, and the diagnostic
+    /// calls it too — there is no second copy of the arithmetic to drift.
+    ///
+    /// The v1.4 fix only moved the tap gesture onto the artwork; the cell kept
+    /// `.contentShape(Rectangle())` + `.onHover` on its whole `cellWidth ×
+    /// cellHeight` frame, so pointing anywhere in the cell lit the selection
+    /// highlight. Reusing `iconIndex` here makes hover, tap and the probe
+    /// share one rectangle.
+    func hoverIndex(atLocal point: CGPoint, slot: Int, count: Int) -> Int? {
+        let cell = cellRect(at: slot)
+        let gridPoint = CGPoint(x: point.x + cell.minX, y: point.y + cell.minY)
+        return iconIndex(at: gridPoint, count: count) == slot ? slot : nil
+    }
+
+    /// Fraction of a cell that actually responds to hover. Used by the probe
+    /// as the measured number behind "range selection" (whole cell = 1.0).
+    var hoverCoverage: CGFloat {
+        let box = iconBox * iconBox
+        let cell = cellWidth * cellHeight
+        return cell > 0 ? box / cell : 0
     }
 
     /// Reorder drop target. Any point maps to the cell it sits in, clamped to
