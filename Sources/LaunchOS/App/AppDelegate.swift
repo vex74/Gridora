@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var launcherMenuItem: NSMenuItem?
     private var keyMonitor: Any?
     private var scrollMonitor: Any?
+    /// Dedicated wheel consumer for an open folder. Registered *after* the
+    /// pager monitor: that one deliberately returns the event unchanged while
+    /// a panel is on top, and this one then claims it for the folder's own
+    /// 3 × 3 pages instead of letting it vanish into a nonexistent ScrollView.
+    private var folderScrollMonitor: Any?
     private let model = LauncherModel.shared
     private let launchStart = ProcessInfo.processInfo.systemUptime
 
@@ -136,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startSearchGlassProbeIfNeeded()
         startFolderGlassProbeIfNeeded()
         startFolderIconGlassProbeIfNeeded()
+        startFolderInteractionProbeIfNeeded()
         startWallpaperPickerProbeIfNeeded()
         startSearchQueryProbeIfNeeded()
         startSearchRealUseProbeIfNeeded()
@@ -1549,6 +1555,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Diagnostic entry point: `LaunchOS --folder-interaction-probe` drives
+    /// the real model entry points behind the four open-folder / drag
+    /// behaviours: artwork-only click hit testing, in-folder reorder,
+    /// wheel + key page turns, and the grid's live make-way preview. Writes
+    /// /tmp/launchos-folder-interaction.log and quits. Always pair it with an
+    /// isolated LAUNCHOS_STATE_DIR.
+    private func startFolderInteractionProbeIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("--folder-interaction-probe") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            self.model.runFolderInteractionProbe(
+                consume: Self.folderShouldConsumeScroll)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
+        }
+    }
+
     /// Diagnostic entry point: `LaunchOS --layout-probe` exercises the sync
     /// snapshot and the folder drag-out path against an isolated state dir,
     /// writes /tmp/launchos-layout-probe.log and quits.
@@ -1581,11 +1603,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard ProbeConfig.enabled else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, let view = self.window?.contentView else { return }
-            FrameProbe.shared.start(view: view) { [weak self] in
-                guard let self else { return }
+            let dragMode = ProbeConfig.dragFPS
+            FrameProbe.shared.start(view: view, drive: { [weak self] in
+                guard let self, !dragMode else { return }
                 let count = max(1, self.model.pageCount)
                 self.model.goToPage((self.model.currentPage + 1) % count)
-            }
+            }, onFrame: dragMode ? { [weak self] frame in
+                self?.model.driveProbeDragFrame(frame)
+            } : nil)
         }
     }
 
@@ -1913,6 +1938,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.model.handleScroll(event)
             return nil
         }
+
+        // An open folder has no NSScrollView of its own. The pager monitor
+        // above hands the wheel back to AppKit in every panel state, so before
+        // this second monitor the event simply disappeared on multi-page
+        // folders. Settings / hidden / search keep their own ScrollViews and
+        // take priority via `otherPanelOpen`.
+        folderScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self,
+                  Self.folderShouldConsumeScroll(
+                      windowVisible: self.window?.isVisible ?? false,
+                      windowKey: self.window?.isKeyWindow ?? false,
+                      folderOpen: self.model.openFolderID != nil,
+                      otherPanelOpen: self.model.settingsOpen
+                          || self.model.hiddenOpen || self.model.searchOpen) else { return event }
+            self.model.handleFolderScroll(event)
+            return nil
+        }
+    }
+
+    /// Pure decision behind the folder wheel monitor. A visible, key launcher
+    /// window with a folder on top and no other panel claims the event; every
+    /// other state lets AppKit deliver it to whatever SwiftUI ScrollView owns
+    /// the screen. Kept separate from `pagerShouldConsumeScroll` so the
+    /// settings-scroll regression keeps asserting its original semantics.
+    static func folderShouldConsumeScroll(windowVisible: Bool,
+                                          windowKey: Bool,
+                                          folderOpen: Bool,
+                                          otherPanelOpen: Bool) -> Bool {
+        windowVisible && windowKey && folderOpen && !otherPanelOpen
     }
 
     /// Pure decision behind the scroll monitor: only the visible, key launcher
