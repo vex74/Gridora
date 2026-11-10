@@ -172,13 +172,16 @@ struct SearchOverlay: View {
     private func resultsGrid(maxHeight: CGFloat, width: CGFloat) -> some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: LauncherModel.searchColumns)
         let shown = Array(results.enumerated())
+        let highlight = SelectionHighlightStyle(settings: model.settings,
+                                                iconSize: resultIconSize)
         return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(shown, id: \.element.id) { index, app in
                         SearchResultItem(app: app,
                                          selected: index == model.searchSelection,
-                                         iconSize: resultIconSize) {
+                                         iconSize: resultIconSize,
+                                         highlight: highlight) {
                             model.closeSearch()
                             model.launch(app)
                         }
@@ -244,30 +247,26 @@ struct SearchResultItem: View {
     let app: AppInfo
     let selected: Bool
     let iconSize: CGFloat
+    /// Same value object the main grid and the open folder use. Search keeps
+    /// its signal-orange focus ring but shares the radius, fill and glow.
+    let highlight: SelectionHighlightStyle
     let action: () -> Void
 
     @State private var hover = false
-    private let accent = DesignTokens.signal
-    private var radius: CGFloat { iconSize * 0.25 }
+
+    private var state: SelectionHighlightState {
+        selected ? .selected : (hover ? .hover : .none)
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 7) {
                 ZStack {
-                    if selected || hover {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(.white.opacity(0.10))
-                            .frame(width: iconSize + 14, height: iconSize + 14)
-                    }
+                    SelectionHighlightSurface(style: highlight, state: state,
+                                              accent: DesignTokens.signal)
                     AppIconImage(app: app, size: iconSize)
                 }
-                .frame(width: iconSize + 18, height: iconSize + 18)
-                .overlay {
-                    if selected {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .stroke(accent, lineWidth: 2)
-                    }
-                }
+                .frame(width: highlight.boxSize, height: highlight.boxSize)
 
                 Text(app.name)
                     .font(.system(size: 11.5, weight: .medium))
