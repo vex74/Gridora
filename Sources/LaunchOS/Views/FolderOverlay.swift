@@ -6,6 +6,10 @@ import SwiftUI
 /// grid. The panel stays in the view tree while a drag is in flight (it only
 /// fades), otherwise SwiftUI would cancel the gesture the moment the folder
 /// closed underneath the user's hand.
+///
+/// `LauncherModel.folderPage` is the single source of truth for the visible
+/// 3 × 3 page: the wheel, arrow keys, page dots, chevrons and diagnostics all
+/// write it, so they can never disagree with what is drawn.
 struct FolderOverlay: View {
     @EnvironmentObject var model: LauncherModel
     @EnvironmentObject var folderDragInfo: FolderDragInfo
@@ -13,13 +17,13 @@ struct FolderOverlay: View {
     let folder: Folder
 
     @State private var nameDraft = ""
-    @State private var pageIndex = 0
     @State private var panelFrame: CGRect = .zero
+    /// `.global` frame of the padded 3 × 3 grid. Recorded once, like
+    /// `panelFrame`: a PreferenceKey here would re-evaluate during paging and
+    /// damage the rasterised page cache behind the panel.
+    @State private var gridFrame: CGRect = .zero
     @State private var appeared = false
     @FocusState private var nameFocused: Bool
-
-    private let columns = 3
-    private let perPage = 9
 
     private var apps: [AppInfo] {
         folder.bundleIDs.compactMap { model.appsByID[$0] }
@@ -37,14 +41,42 @@ struct FolderOverlay: View {
         min(760, max(560, model.areaSize.width * 0.42))
     }
 
-    private var cellWidth: CGFloat { (panelWidth - 88) / CGFloat(columns) }
-    private var cellHeight: CGFloat { iconSize + 54 }
-    private var gridHeight: CGFloat { 3 * cellHeight + 2 * 18 + 40 }
+    /// The one geometry object shared by drawing, click hit-testing and drop
+    /// targets. Nothing in this file re-derives cell arithmetic.
+    private var grid: FolderGridMetrics {
+        FolderGridMetrics(cellWidth: (panelWidth - 88) / 3,
+                          cellHeight: iconSize + 54,
+                          iconSize: iconSize)
+    }
 
     private var chunks: [[AppInfo]] {
-        stride(from: 0, to: apps.count, by: perPage).map { start in
-            Array(apps[start..<min(start + perPage, apps.count)])
+        let per = FolderGridMetrics.perPage
+        return stride(from: 0, to: apps.count, by: per).map { start in
+            Array(apps[start..<min(start + per, apps.count)])
         }
+    }
+
+    private var pageIndex: Int {
+        min(max(model.folderPage, 0), max(0, chunks.count - 1))
+    }
+
+    private var visible: [AppInfo] {
+        chunks.indices.contains(pageIndex) ? chunks[pageIndex] : []
+    }
+
+    /// Reorder preview while an app is dragged *inside* the panel. The same
+    /// remove-then-insert the model performs on release, so the icons make way
+    /// exactly where the app will land. Only `dropSlot` (a cell index) is
+    /// published; the 120 Hz pointer stream never touches this array.
+    private var displayed: [AppInfo] {
+        guard let drop = folderDragInfo.dropSlot,
+              let draggingID = folderDragInfo.appID,
+              let source = visible.firstIndex(where: { $0.bundleID == draggingID }),
+              source != drop else { return visible }
+        var result = visible
+        let moved = result.remove(at: source)
+        result.insert(moved, at: min(max(drop, 0), result.count))
+        return result
     }
 
     var body: some View {
@@ -73,7 +105,7 @@ struct FolderOverlay: View {
                         Text("文件夹是空的")
                             .font(.system(size: 13))
                             .foregroundStyle(.white.opacity(0.4))
-                            .frame(width: panelWidth, height: gridHeight)
+                            .frame(width: panelWidth, height: grid.gridHeight)
                     } else {
                         folderGrid
                         if chunks.count > 1 { pageBar }
@@ -88,9 +120,7 @@ struct FolderOverlay: View {
                 .background(
                     GeometryReader { panel in
                         // A plain onAppear write, not a PreferenceKey: the
-                        // folder panel only needs its frame once, and a
-                        // preference that re-evaluates during paging damages
-                        // the pager's rasterised-page cache.
+                        // folder panel only needs its frame once.
                         Color.clear.onAppear { panelFrame = panel.frame(in: .global) }
                     }
                 )
@@ -114,7 +144,7 @@ struct FolderOverlay: View {
             }
             .onChange(of: folderID) { _, _ in
                 nameDraft = folder.name
-                pageIndex = 0
+                model.setFolderPage(0)
             }
         }
     }
@@ -122,16 +152,15 @@ struct FolderOverlay: View {
     // MARK: - Grid
 
     private var folderGrid: some View {
-        let visible = chunks.indices.contains(pageIndex) ? chunks[pageIndex] : []
-        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(cellWidth), spacing: 12),
-                                        count: columns),
-                         spacing: 18) {
-            ForEach(visible) { app in
+        let g = grid
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(g.cellWidth), spacing: g.columnSpacing),
+                                        count: FolderGridMetrics.columns),
+                         spacing: g.rowSpacing) {
+            ForEach(Array(displayed.enumerated()), id: \.element.bundleID) { slot, app in
                 FolderAppCell(app: app,
                               folderID: folderID,
-                              size: iconSize,
-                              cellWidth: cellWidth,
-                              cellHeight: cellHeight)
+                              grid: g,
+                              slot: slot)
                     .gesture(
                         DragGesture(minimumDistance: 6, coordinateSpace: .global)
                             .onChanged { value in
@@ -141,29 +170,39 @@ struct FolderOverlay: View {
                                                           at: value.location)
                                 }
                                 model.updateFolderDrag(to: value.location,
-                                                       panelFrame: panelFrame)
+                                                       panelFrame: panelFrame,
+                                                       gridFrame: gridFrame,
+                                                       grid: g)
                             }
                             .onEnded { value in
                                 _ = model.endFolderDrag(at: value.location,
-                                                        panelFrame: panelFrame)
+                                                        panelFrame: panelFrame,
+                                                        gridFrame: gridFrame,
+                                                        grid: g)
                             }
                     )
             }
-            if visible.count < perPage {
-                ForEach(0..<(perPage - visible.count), id: \.self) { _ in
-                    Color.clear.frame(height: cellHeight)
+            if displayed.count < FolderGridMetrics.perPage {
+                ForEach(0..<(FolderGridMetrics.perPage - displayed.count), id: \.self) { _ in
+                    Color.clear.frame(height: g.cellHeight)
                 }
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 20)
-        .frame(height: gridHeight)
+        .padding(.horizontal, g.horizontalPadding)
+        .padding(.vertical, g.verticalPadding)
+        .frame(height: g.gridHeight)
+        .animation(Motion.quick, value: displayed.map(\.bundleID))
+        .background(
+            GeometryReader { gridGeo in
+                Color.clear.onAppear { gridFrame = gridGeo.frame(in: .global) }
+            }
+        )
     }
 
     private var pageBar: some View {
         HStack(spacing: 16) {
             Button {
-                withAnimation(Motion.quick) { pageIndex = max(0, pageIndex - 1) }
+                withAnimation(Motion.quick) { model.turnFolderPage(-1) }
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .semibold))
@@ -179,13 +218,16 @@ struct FolderOverlay: View {
                     Circle()
                         .fill(.white.opacity(index == pageIndex ? 0.9 : 0.28))
                         .frame(width: 6, height: 6)
+                        .frame(width: 18, height: 28)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(Motion.quick) { model.setFolderPage(index) }
+                        }
                 }
             }
 
             Button {
-                withAnimation(Motion.quick) {
-                    pageIndex = min(chunks.count - 1, pageIndex + 1)
-                }
+                withAnimation(Motion.quick) { model.turnFolderPage(1) }
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
@@ -287,9 +329,8 @@ struct FolderAppCell: View {
     @EnvironmentObject var folderDragInfo: FolderDragInfo
     let app: AppInfo
     let folderID: String
-    let size: CGFloat
-    let cellWidth: CGFloat
-    let cellHeight: CGFloat
+    let grid: FolderGridMetrics
+    let slot: Int
 
     @State private var hover = false
 
@@ -297,33 +338,53 @@ struct FolderAppCell: View {
         model.allFolders.filter { $0.id != folderID }
     }
 
+    /// Artwork square in the cell's own coordinates. `FolderGridMetrics` is
+    /// the same object the hit-test probe uses, so "click the icon" means the
+    /// same rectangle in the panel and in the diagnostic.
+    private var iconRect: CGRect {
+        let cell = grid.cellRect(at: slot)
+        let art = grid.iconRect(at: slot)
+        return CGRect(x: art.minX - cell.minX,
+                      y: art.minY - cell.minY,
+                      width: art.width,
+                      height: art.height)
+    }
+
     var body: some View {
-        VStack(spacing: 9) {
+        let art = iconRect
+        return ZStack(alignment: .topLeading) {
+            // Only this artwork square carries the tap gesture. The label,
+            // cell corners and row/column gaps are inert, matching the main
+            // grid's iconIndex(at:count:) rule.
             ZStack {
                 if hover {
-                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                    RoundedRectangle(cornerRadius: grid.iconSize * 0.24, style: .continuous)
                         .fill(.white.opacity(0.10))
-                        .frame(width: size * 1.16, height: size * 1.16)
+                        .frame(width: grid.iconSize * 1.16,
+                               height: grid.iconSize * 1.16)
                 }
-                AppIconImage(app: app, size: size)
+                AppIconImage(app: app, size: grid.iconSize)
             }
-            .frame(width: size + 20, height: size + 20)
+            .frame(width: art.width, height: art.height)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                model.openFolderID = nil
+                model.launch(app)
+            }
+            .position(x: art.midX, y: art.midY)
 
             Text(app.name)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.84))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: cellWidth - 12)
+                .frame(width: grid.cellWidth - 12, height: 16)
+                .position(x: grid.cellWidth / 2, y: art.maxY + 9 + 8)
         }
-        .frame(width: cellWidth, height: cellHeight)
+        .frame(width: grid.cellWidth, height: grid.cellHeight)
         .opacity(folderDragInfo.appID == app.bundleID ? 0.22 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .onTapGesture {
-            model.openFolderID = nil
-            model.launch(app)
-        }
         .contextMenu {
             Button("打开") { model.openFolderID = nil; model.launch(app) }
             Button("在访达中显示") {
