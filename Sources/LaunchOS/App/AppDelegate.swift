@@ -487,7 +487,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let rollback = ProbeConfig.noFogUnify
             let glassOn = self.model.settings.glassEnabled
+            // v1.6.4: in the shipped single-window mode the cover paints NO
+            // pixels, so its glass layers are expected to be zero. Only the
+            // LAUNCHOS_KEEP_COVER=1 rollback still renders a second glass.
             let expectCoverGlass = glassOn && !rollback && SearchGlass.isAvailable
+                && ProbeConfig.keepCover
             check("B3 mainWindowFogRendered", mainBackdrop > 0,
                   "backdrop=\(mainBackdrop)")
             check("B4 coverWindowFogRendered",
@@ -626,22 +630,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let coverRenders = FogPlateRenderProbe.coverRenders
             lines.append("plateRenders main=\(plateRenders) cover=\(coverRenders) "
                 + "noCoverPlate=\(ProbeConfig.noCoverPlate)")
+            let coverPlateExpected = expectPlate && !ProbeConfig.noCoverPlate
+                && ProbeConfig.keepCover
             check("B17 coverAlsoRendersPlate",
-                  (coverRenders > 0) == (expectPlate && !ProbeConfig.noCoverPlate),
-                  "cover=\(coverRenders) expectPlate=\(expectPlate) "
-                    + "noCoverPlate=\(ProbeConfig.noCoverPlate)")
+                  (coverRenders > 0) == coverPlateExpected,
+                  "cover=\(coverRenders) expect=\(coverPlateExpected) "
+                    + "keepCover=\(ProbeConfig.keepCover)")
             check("B18 bothWindowsShareOnePlate",
                   plateFog.plate == coverPlateFog.plate
                     && (plateFog.plate != nil) == expectPlate
                     && (expectPlate ? plateRenders > 0 : plateRenders == 0),
                   "main=[\(plateFog.readout)] cover=[\(coverPlateFog.readout)]")
             check("B19 coverPlateRollbackIsSingleVariable",
-                  expectPlate
-                    ? (coverRenders > 0) == !ProbeConfig.noCoverPlate
-                    : (coverRenders == 0 && plateRenders == 0),
+                  (coverRenders > 0) == coverPlateExpected
+                    && (expectPlate ? plateRenders > 0 : plateRenders == 0),
                   "main=\(plateRenders) cover=\(coverRenders) "
-                    + "noFogPlate=\(ProbeConfig.noFogPlate) "
+                    + "keepCover=\(ProbeConfig.keepCover) "
                     + "noCoverPlate=\(ProbeConfig.noCoverPlate)")
+
+            // v1.6.4 — ONE composite for the entire screen. A pure-value
+            // assertion would be a look-alike green, so these read the REAL
+            // window levels, frames and layer trees.
+            let coverTree = self.treeClasses(in: self.menuCover?.contentView)
+            let coverBackdropNow = coverTree.filter { $0.contains("CABackdropLayer") }.count
+            let coverPortalNow = coverTree.filter { $0.contains("SDFPortalLayer") }.count
+            let mainLevel = self.window?.level.rawValue ?? -1
+            let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+            let mainFrame = self.window?.frame ?? .zero
+            let coverFrame = self.menuCover?.frame ?? .zero
+            lines.append("singleWindow mainLevel=\(mainLevel) menuLevel=\(menuLevel) "
+                + "mainFrame=\(NSStringFromRect(mainFrame)) "
+                + "coverFrame=\(NSStringFromRect(coverFrame)) "
+                + "keepCover=\(ProbeConfig.keepCover) "
+                + "coverTree=\(coverTree.count) backdrop=\(coverBackdropNow) "
+                + "portal=\(coverPortalNow)")
+            check("B20 mainWindowAboveMenuBar",
+                  ProbeConfig.keepCover
+                    ? mainLevel == 19
+                    : mainLevel > menuLevel,
+                  "main=\(mainLevel) menu=\(menuLevel) "
+                    + "keepCover=\(ProbeConfig.keepCover)")
+            check("B21 coverPaintsNoSecondComposite",
+                  ProbeConfig.keepCover
+                    ? coverBackdropNow > 0
+                    : (coverBackdropNow == 0 && coverPortalNow == 0),
+                  "backdrop=\(coverBackdropNow) portal=\(coverPortalNow) "
+                    + "layers=\(coverTree.count)")
+            check("B22 mainWindowCoversEntireTopStrip",
+                  abs(mainFrame.width - coverFrame.width) < 0.5
+                    && abs(mainFrame.height - coverFrame.height) < 0.5
+                    && mainFrame.minY <= coverFrame.minY + 0.5
+                    && mainFrame.maxY >= coverFrame.maxY - 0.5,
+                  "main=\(NSStringFromRect(mainFrame)) "
+                    + "cover=\(NSStringFromRect(coverFrame))")
+            check("B23 keepCoverIsSingleVariable",
+                  ProbeConfig.keepCover == (mainLevel == 19)
+                    && ProbeConfig.keepCover == (coverBackdropNow > 0),
+                  "keepCover=\(ProbeConfig.keepCover) mainLevel=\(mainLevel) "
+                    + "coverBackdrop=\(coverBackdropNow)")
+            let hiddenState = BackdropFog.state(openFolderID: nil,
+                                                searchOpen: false,
+                                                outsidePanel: false,
+                                                hiddenOpen: true)
+            let hiddenFog = BackdropFog.make(settings: self.model.settings,
+                                             state: hiddenState)
+            check("B24 hiddenPanelUsesOneFog",
+                  hiddenState == .panel && hiddenFog.active
+                    && abs(hiddenFog.scrim - 0.50) < 0.0001
+                    && hiddenFog.material == .none && hiddenFog.plate == nil,
+                  hiddenFog.readout)
+            check("B25 blueFocusRingSuppressed",
+                  GlassIconButton.systemFocusEffectDisabled
+                    && FocusRingAudit.buttonsAppeared >= 3,
+                  "disabled=\(GlassIconButton.systemFocusEffectDisabled) "
+                    + "buttons=\(FocusRingAudit.buttonsAppeared)")
 
             lines.append(all ? "PASS" : "FAIL")
             lines.append("DONE")
@@ -2077,7 +2139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Launchpad sits *below* the Dock (kCGDockWindowLevel = 20) so the
         // Dock stays visible and clickable, and hides the menu bar via its
         // presentation options while open.
-        window.level = NSWindow.Level(rawValue: 19)
+        // v1.6.4: the main window itself covers the system menu bar. The old
+        // split (level 19 + a level-26 cover) made the top strip a SECOND
+        // composite whose Liquid Glass sampled the already-dimmed main window,
+        // so it came out ~23 luminance darker. One window = one composite.
+        // LAUNCHOS_KEEP_COVER=1 restores the v1.6.3 split for A/B rollback.
+        window.level = NSWindow.Level(rawValue: ProbeConfig.keepCover
+            ? 19
+            : Int(CGWindowLevelForKey(.statusWindow)) + 1)
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.isMovable = false
         window.isReleasedWhenClosed = false

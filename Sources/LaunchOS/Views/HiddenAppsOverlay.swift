@@ -11,9 +11,18 @@ struct HiddenAppsOverlay: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.50)
-                .ignoresSafeArea()
-                .onTapGesture { model.hiddenOpen = false }
+            // v1.6.4: no hand-rolled scrim. The hidden-apps overlay uses the
+            // SAME fog surface as folder / search, so the top strip and the
+            // grid stay one composite (and one source of dimming).
+            BackdropFogSurface(
+                fog: BackdropFog.make(
+                    settings: model.settings,
+                    state: BackdropFog.state(
+                        openFolderID: model.openFolderID,
+                        searchOpen: model.searchOpen,
+                        outsidePanel: false,
+                        hiddenOpen: model.hiddenOpen)),
+                onClose: { model.hiddenOpen = false })
 
             VStack(spacing: 0) {
                 header

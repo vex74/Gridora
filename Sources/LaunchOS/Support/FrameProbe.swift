@@ -78,6 +78,12 @@ enum ProbeConfig {
     /// rollback to the v1.6.2 split (cover sampled its own window only).
     static let noCoverPlate =
         ProcessInfo.processInfo.environment["LAUNCHOS_NO_COVER_PLATE"] == "1"
+    /// v1.6.4: the MAIN window is raised above the system menu bar and paints
+    /// the entire screen by itself; the level-26 cover becomes a pixel-free
+    /// placeholder. One window = one composite = no top-strip colour seam.
+    /// Single-variable rollback to the v1.6.3 two-window split for A/B.
+    static let keepCover =
+        ProcessInfo.processInfo.environment["LAUNCHOS_KEEP_COVER"] == "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")

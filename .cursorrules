@@ -329,9 +329,17 @@
 - **回退** `LAUNCHOS_NO_FOG_PLATE=1`（`ProbeConfig.noFogPlate`），精确回到 v1.6.1 的彩色斑块。
 - **探针不许假绿**：`--backdrop-fog-probe` B11–B16 必须重新打开**真入口** `model.openFolderID`；`B11` 用 `FogPlateRenderProbe.mainRenders`（`FogPlateView.onAppear`）证明视图真渲染（`plateRenders=1`），B12/B13 验两窗口同值 + 参数同源，B14/B15 验状态机，B16 验回退；`--appearance-probe` K1–K6 固化状态机与「不新增键」。FPS 必须做 `LAUNCHOS_NO_FOG_PLATE=1` 单变量 A/B（多一份全屏 `BackgroundView` 的代价要实测，不能假设）。
 
-## 顶部硬色带 / 两窗口同构（2026-11-11，v1.6.3）
-- **诉求**：用户用红圈标注屏幕最上方 0–24px 那条深灰带。截图量化：顶部亮度 71.4、下方 94–98，差 23 且边界一刀切；两侧彩度 7–8（v1.6.2 已生效，**不是**图标斑块复发）。右上角蓝色细线圈不是 Gridora 绘制（全项目无蓝色圆环控件，v1.6.1 截图同一位置已有），不要为它改代码。
+## 顶部硬色带 / 两窗口同构（2026-11-11，v1.6.3 —— **已被真机证伪，勿再采用**）
+- **诉求**：用户用红圈标注屏幕最上方 0–24px 那条深灰带。截图量化：顶部亮度 71.4、下方 94–98，差 23 且边界一刀切；两侧彩度 7–8（v1.6.2 已生效，**不是**图标斑块复发）。右上角蓝色细线圈**是 Gridora 的 TopBar 搜索按钮 + macOS 键盘焦点环**（v1.6.3 误判为系统图标，v1.6.4 已用 `.focusEffectDisabled()` 去掉）；用户明确要「蓝圈消不掉」+「主页面和打开文件夹两个状态顶部都与下面不匹配」。
 - **根因**：v1.6.2 只让主窗口画 `FogPlate`；cover 窗口（level 26）的 `glassEffect` 采到自己窗口（包含其后已被压暗的主窗口顶部），二次压暗 → 顶部比下方暗 23。统一参数、统一 `plate` 纯值都不够，**必须让两窗口玻璃下面的不透明底板也同构**。
 - **唯一真源**：`FogPlateSource`（main / cover）+ `BackdropFogSurface.plateSource` + `rendersPlate`（main 看 `coversGrid`，cover 看 `!ProbeConfig.noCoverPlate`）+ `FogPlateView(source:)`（仍是唯一渲染出口，按 source 分别记 `FogPlateRenderProbe.mainRenders/coverRenders`）。两窗口层序统一为 `plate → glass → scrim`；`MenuBarCover` 传 `.cover`，`coversGrid` 仍 false。**禁止**改成给网格 `.opacity(0)` / `if` 切结构，也禁止再写第二套雾材质或第六个设置键。
 - **回退** `LAUNCHOS_NO_COVER_PLATE=1`（`ProbeConfig.noCoverPlate`）：`coverRenders=0`、`coverLayers 125→100`，精确回到 v1.6.2 的硬色带；与 `LAUNCHOS_NO_FOG_PLATE=1`（回 v1.6.1 彩色斑块）相互独立。
 - **探针不许假绿**：B17–B19 必须用视图层 `onAppear` 计数（正常 main=1 cover=1 / 只关 cover plate 时 cover=0 且 main=1 / 只关 plate 时两者 0），K7/K8 固化「不改变 `BackdropFog` 纯值 / 编码不出现 `cover` `source` 新键」。FPS 必须做 `LAUNCHOS_NO_COVER_PLATE=1` 单变量 A/B（cover 多一份全屏 `BackgroundView` 的代价要实测）。
+- **证伪结论**：v1.6.3 的 cover plate 确实渲染（探针 `main=1 cover=1`、`coverLayers 125`），但真机两张截图色带仍在：主页面顶部 164.7 均匀灰 / 彩度 0.6 vs 下方彩度 16.8；打开文件夹顶部 72.3 vs 下方 109.3。两个独立 NSWindow 各自做 `glassEffect` backdrop 合成，多画一份底板消不掉边缘采样与二次压暗。**不要再调参数或加 plate，改结构。**
+
+## 整屏单窗口同源 / 蓝色焦点环（2026-11-11，v1.6.4）
+- **唯一真源**：主窗口 level = `ProbeConfig.keepCover ? 19 : Int(CGWindowLevelForKey(.statusWindow)) + 1`（26 > 系统菜单栏 24），自己盖住菜单栏；`MenuBarCover` 默认只画 `Color.clear`、`legacyCover` 仅在 `LAUNCHOS_KEEP_COVER=1` 时渲染。顶部 24pt 与下方由**同一窗口、同一套合成**渲染 → 色带物理消失。**禁止**再给 cover 画背景 / 玻璃 / 材质，禁止给网格 `.opacity(0)` 或 `if` 切结构。
+- **回退**：`LAUNCHOS_KEEP_COVER=1` 精确回到 v1.6.3 双窗口（level 19、coverTree 125 / backdrop 3 / portal 9），是唯一变量；与 `NO_COVER_PLATE` / `NO_FOG_PLATE` 独立。仍是五个 `glass*` 键。
+- **焦点环**：`GlassIconButton` 必须保留 `.focusEffectDisabled()` + `FocusRingAudit.note()`。系统蓝环会浮在雾层上、被误认成「隐藏 App 图标」；禁止用 `Button` 默认焦点效果或加蓝色描边（设计唯一信号橙 `#FF5C35`）。
+- **状态机**：`BackdropFogState` 四态 `none / folder(outside) / search / panel`；`.panel`（hiddenOpen）为 `scrim=0.50 / material=none`，`HiddenAppsOverlay` 必须走 `BackdropFogSurface(onClose:)`，**禁止**手写 `Color.black.opacity` 或第二套 scrim。
+- **探针不许假绿**：B20–B25 必须读**真窗口** level / frame / layer 树（默认 `coverTree=2 / backdrop=0 / portal=0 / mainLevel=26 / frame 2560×1440`；回退 `coverTree=125 / backdrop=3 / portal=9 / mainLevel=19`），B25 靠真按钮 `onAppear` 计数 ≥3，K9/K10 固定默认与状态映射；B4/B17/B19 按 `keepCover` 分支断言，不能只测纯值。FPS 必须做 `LAUNCHOS_KEEP_COVER=1` 单变量 A/B。TCC 禁自截屏，蓝圈与色带是否完全消失最终需用户真机截图确认。

@@ -520,6 +520,23 @@ enum AppearanceProbe {
             check("K8 coverPlateAddsNoSettingsKey", false, "encode failed: \(error)")
         }
 
+        // v1.6.4 — one window paints the whole screen; the cover is pixel-free
+        // by default and LAUNCHOS_KEEP_COVER=1 is the only way back.
+        check("K9 singleWindowIsDefault",
+              !ProbeConfig.keepCover && GlassIconButton.systemFocusEffectDisabled,
+              "keepCover=\(ProbeConfig.keepCover) "
+                + "focusDisabled=\(GlassIconButton.systemFocusEffectDisabled)")
+        let kHidden = BackdropFog.state(openFolderID: nil, searchOpen: false,
+                                        outsidePanel: false, hiddenOpen: true)
+        let kHiddenFog = BackdropFog.make(settings: base, state: kHidden)
+        let kPlain = BackdropFog.state(openFolderID: nil, searchOpen: false,
+                                       outsidePanel: false, hiddenOpen: false)
+        check("K10 hiddenPanelStateIsExplicit",
+              kHidden == .panel && kPlain == .none
+                && kHiddenFog.active && kHiddenFog.material == .none
+                && abs(kHiddenFog.scrim - 0.50) < 0.0001,
+              "hidden=[\(kHiddenFog.readout)] plain=\(kPlain)")
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")

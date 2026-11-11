@@ -80,6 +80,9 @@ enum BackdropFogState: Equatable {
     case none
     case folder(outsidePanel: Bool)
     case search
+    /// v1.6.4: opaque panel (hidden apps). Its 0.50 black scrim used to be a
+    /// hand-rolled second dimming layer; it now shares the ONE fog surface.
+    case panel
 }
 
 enum BackdropFogMaterial: String, Equatable {
@@ -141,9 +144,11 @@ struct BackdropFog: Equatable {
     /// State mapping shared by the menu-bar cover and the diagnostics, so a
     /// probe tests the real view's decision rather than a look-alike copy.
     static func state(openFolderID: String?, searchOpen: Bool,
-                      outsidePanel: Bool) -> BackdropFogState {
+                      outsidePanel: Bool,
+                      hiddenOpen: Bool = false) -> BackdropFogState {
         if openFolderID != nil { return .folder(outsidePanel: outsidePanel) }
         if searchOpen { return .search }
+        if hiddenOpen { return .panel }
         return .none
     }
 
@@ -179,10 +184,16 @@ struct BackdropFog: Equatable {
                 ? settings.glassScrim * 0.45
                 : settings.glassScrim
             tint = settings.glassScrim
+        case .panel:
+            // Exactly the old HiddenAppsOverlay scrim, expressed once.
+            scrim = 0.50
+            tint = 0.50
         }
 
         let material: BackdropFogMaterial
-        if !settings.glassEnabled {
+        if case .panel = state {
+            material = .none
+        } else if !settings.glassEnabled {
             material = .none
         } else if SearchGlass.isAvailable && !ProbeConfig.noFogUnify {
             material = .glass

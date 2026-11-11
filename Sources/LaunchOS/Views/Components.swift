@@ -1,9 +1,22 @@
 import AppKit
 import SwiftUI
 
+/// v1.6.4 view-layer evidence: every shipped `GlassIconButton` goes through
+/// the focus-effect-disabled path. `--backdrop-fog-probe` B25 counts the real
+/// buttons, so a pure-value "we disabled the ring" claim cannot go green alone.
+@MainActor
+enum FocusRingAudit {
+    static private(set) var buttonsAppeared = 0
+    static func note() { buttonsAppeared += 1 }
+}
+
 // MARK: - Icon button
 
 struct GlassIconButton: View {
+    /// Diagnostic mirror of the modifier applied at the single call site
+    /// below. AppKit's blue ring is NEVER part of the shipped button.
+    static let systemFocusEffectDisabled = true
+
     let systemName: String
     var help: String = ""
     var active: Bool = false
@@ -26,6 +39,15 @@ struct GlassIconButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        // v1.6.4: AppKit paints a saturated BLUE keyboard focus ring around a
+        // plain SwiftUI Button. It stayed on the search button after a
+        // shortcut, floated above the fog and read as a stray "hidden apps"
+        // indicator (the circle the user marked in two screenshots). The
+        // design allows exactly one signal colour, so keep the button
+        // keyboard-focusable but suppress the system effect; active/hover
+        // remain the only affordances. Available from our macOS 14 baseline.
+        .focusEffectDisabled()
+        .onAppear { FocusRingAudit.note() }
         .onHover { hover = $0 }
         .help(help)
         .accessibilityLabel(help.isEmpty ? systemName : help)

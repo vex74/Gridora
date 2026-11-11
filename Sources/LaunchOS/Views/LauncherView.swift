@@ -259,6 +259,23 @@ struct MenuBarCover: View {
     }
 
     var body: some View {
+        Group {
+            if ProbeConfig.keepCover {
+                legacyCover
+            } else {
+                // v1.6.4: NO pixels. The main window now sits above the system
+                // menu bar and paints the top strip itself, so the strip and
+                // the grid share ONE composite. Drawing any second background
+                // or glass here reintroduces the colour seam the user marked
+                // in both the idle and the open-folder screenshots.
+                Color.clear
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    /// v1.6.3 path, kept only as the one-variable rollback / A/B control.
+    private var legacyCover: some View {
         ZStack {
             BackgroundView(useWallpaper: model.settings.useWallpaper,
                            wallpaper: model.wallpaper,
@@ -266,8 +283,6 @@ struct MenuBarCover: View {
                            dim: model.quantizedBackdropDim,
                            animate: false)
 
-            // Clipped by the same mask as the backdrop: the fog must never
-            // spill below the menu-bar strip and cover the main window.
             if fog.visibleOnCover {
                 BackdropFogSurface(fog: fog, plateSource: .cover)
             }

@@ -90,14 +90,22 @@ LAUNCHOS_FORCE_INSTALL=1 ./Scripts/install.sh # 即使版本相同也强制替�
   摘掉，整屏与屏幕最上方合成同一片干净灰雾；拖 App 出面板时 `plate` 立即置 nil，
   网格恢复可见以便放回。  仍是同一组五个 `glass*` 值、没有第六个设置键，
   `LAUNCHOS_NO_FOG_PLATE=1` 是单变量回退开关。
-  **v1.6.3：消掉屏幕最上方那条深色带**。v1.6.2 只让主窗口画 `FogPlate`，
-  菜单栏窗口的玻璃仍采到自己窗口（包含其后已被压暗的主窗口顶部），二次压暗
-  —— 真机截图顶部 0–24px 亮度 71.4、下方 94–98，差 23 且一刀切。现在
-  `MenuBarCover` 也用 `BackdropFogSurface(plateSource: .cover)` 画**同一份不透明
-  plate**，两窗口层序统一为 `plate → glass → scrim`，玻璃采样目标一致；layer 树实测
-  `coverLayers 100→125`、`plateRenders main=1 cover=1`。`coversGrid` 仍只对主窗口为
-  true（只有它有网格）。`LAUNCHOS_NO_COVER_PLATE=1` 精确回到 v1.6.2 的硬色带，
-  与 `LAUNCHOS_NO_FOG_PLATE=1` 相互独立，仍是五个 `glass*` 键。
+  **v1.6.3 尝试（已被真机证伪，勿回退采用）**：让 `MenuBarCover` 也画同一份
+  `FogPlate`、两窗口层序统一 `plate → glass → scrim`。探针确实测到
+  `coverLayers 100→125` / `plateRenders main=1 cover=1`，但用户两张截图显示色带仍在
+  —— 两个独立 NSWindow 各自做一次 `glassEffect` backdrop 合成，再多画一份底板也消不掉
+  边缘采样与二次压暗。**给 cover 加任何背景/玻璃都会重新引入色差**。
+  **v1.6.4：整屏单窗口同源**。主窗口 level 从 19 提到 `statusWindow+1`（26，高于系统
+  菜单栏 24），自己盖住菜单栏；`MenuBarCover` 默认只画 `Color.clear`、不产生任何像素，
+  顶部 24pt 与下方网格由**同一个窗口、同一套合成**渲染，色带物理消失。layer 树实测
+  正常模式 `coverTree=2 / backdrop=0 / portal=0 / mainLevel=26`；回退模式
+  `coverTree=125 / backdrop=3 / portal=9 / mainLevel=19`。
+  `LAUNCHOS_KEEP_COVER=1` 是单变量回退，精确回到 v1.6.3 双窗口；与
+  `LAUNCHOS_NO_COVER_PLATE=1`、`LAUNCHOS_NO_FOG_PLATE=1` 相互独立，仍是五个 `glass*` 键。
+  `BackdropFogState` 新增 `.panel`（隐藏 App 面板），`HiddenAppsOverlay` 手写的
+  `Color.black.opacity(0.50)` 改走 `BackdropFogSurface` 唯一出口，视觉等价、不再有第二套 scrim。
+  `GlassIconButton` 用 `.focusEffectDisabled()` 去掉系统蓝色键盘焦点环（截图右上角那个
+  被误认为「隐藏 App 图标」的蓝圈），active/hover 仍是唯一反馈，按钮键盘可聚焦性保留。
   高亮是**纯值派生、不是 `glassEffect`** —— 主网格在光栅化页里，真玻璃会被完全扁平掉且
   实测 jank 涨到 9.75% / p95 17.98ms；`LAUNCHOS_NO_SELECTION_GLASS=1` 是单变量回退开关。
   设置页三个预览台与真机共用同一组值。
@@ -365,13 +373,13 @@ LAUNCHOS_STATE_DIR=/tmp/los-state LAUNCHOS_SYNC_DIR=/tmp/los-sync \
 
 输出 `/tmp/launchos-backdrop-fog.log`。必须走**真入口** `model.openFolderID`，
 然后分别 dump 主窗口与菜单栏遮盖窗口的 layer 树 —— 纯值断言曾经让整格 hover 假绿，
-所以 `B4` 断言顶部窗口**自己**的 `CABackdropLayer` 真的出现（实测 `backdrop 0→3`、
-`portal 0→9`），`B8` 关玻璃后两棵树都归零，`B2` 同时核对遮盖窗口 level 26 存在且可见。
-`B5` 用视图自己调用的 `BackdropFog.state` 证明两窗口参数相等，`B6/B7` 覆盖拖出面板与
-搜索两个状态，`B10` 关闭文件夹后顶部雾层随之停用，`B11–B16` 是 v1.6.2 的干净背板取证、
-`B17–B19` 是 v1.6.3 的两窗口同构取证（见下方 K 组）。
-带 `LAUNCHOS_NO_FOG_UNIFY=1` 复跑时 `B4` 按设计断言顶部窗口 `backdrop=0`（旧行为），
-是探针本身的证伪对照。
+`B4` 按模式断言：默认单窗口下顶部 cover **没有** `CABackdropLayer`（`backdrop=0`），
+只有 `LAUNCHOS_KEEP_COVER=1` 回退时才出现（实测 `backdrop=3` / `portal=9`）；`B8` 关玻璃后
+两棵树都归零，`B2` 核对遮盖窗口 level 26 存在且可见。`B5` 用视图自己调用的
+`BackdropFog.state` 证明参数相等，`B6/B7` 覆盖拖出面板与搜索，`B10` 关闭文件夹后顶部雾层
+随之停用，`B11–B16` 是 v1.6.2 干净背板取证、`B17–B19` 是 v1.6.3 同构取证（见下方 K 组）。
+带 `LAUNCHOS_NO_FOG_UNIFY=1` 复跑时 `B4` 按设计断言顶部窗口 `backdrop=0`，是探针本身的
+证伪对照。
 
 **K 组（v1.6.2）固定「干净背板」**：`K1` 两个窗口拿到同一份 `FogPlate`、
 `K2` 拖出面板时 `plate=nil` 让网格露出、`K3` 搜索与关闭态都不画背板、
@@ -388,6 +396,16 @@ v1.4 整格 hover 假绿的教训，这里必须有视图层证据。
 都为 0（回到 v1.6.1）。`K7` 断言 cover 渲染不改变 `BackdropFog` 纯值，`K8` 断言编码后
 不出现 `cover` / `source` 新键。打开文件夹时多一份全屏 `BackgroundView` 的代价，
 必须用 `LAUNCHOS_NO_COVER_PLATE=1` 做单变量 FPS A/B，不能假设。
+
+**B20–B25 / K9–K10（v1.6.4）固定「整屏单窗口」**：`B20` 读真窗口 level（默认
+`mainLevel=26 > menuLevel=24`，回退 `=19`）；`B21` 断言默认 cover 树既无 backdrop 也无
+portal（实测仅 2 层）；`B22` 断言主窗口 frame 完整覆盖顶部条（2560×1440 与 cover 相同）；
+`B23` 断言 `LAUNCHOS_KEEP_COVER=1` 是唯一变量；`B24` 断言 `.panel` 状态走同一雾层出口
+（`scrim=0.50 / material=none`）；`B25` 用 `FocusRingAudit.buttonsAppeared`（真按钮
+`onAppear` 计数 ≥3）+ `GlassIconButton.systemFocusEffectDisabled` 固定焦点环已禁用。
+`K9` 固定单窗口是默认、焦点环已关，`K10` 固定 `hiddenOpen` → `.panel` 的状态映射。
+**蓝色焦点环与顶部色带是否完全消失，最终仍需真机截图确认**（TCC 禁自截屏）；回退
+`LAUNCHOS_KEEP_COVER=1` 可精确复现上一版用于对照。
 
 `Views/DesignTokens.swift` 是颜色／圆角／字号／发丝线的唯一真源：主界面近黑冷调
 `#0B0D11` ＋唯一信号橙 `#FF5C35`（约 10%），设置页白底＋系统蓝是既定例外。
