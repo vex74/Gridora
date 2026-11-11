@@ -82,6 +82,14 @@ LAUNCHOS_FORCE_INSTALL=1 ./Scripts/install.sh # 即使版本相同也强制替�
   都只剩压暗，拖 App 出面板时两边同时减到 10%。`--backdrop-fog-probe` 用两个窗口各自的
   layer 树作证（顶部 `backdrop 0→3 / portal 0→9`，关玻璃两树都归零），
   `LAUNCHOS_NO_FOG_UNIFY=1` 是单变量回退开关。
+  **v1.6.2：两侧不再透出图标色斑**。上面统一的是雾的「参数」，但两个窗口的
+  `glassEffect` 采样的**底图**仍不同：顶部窗口底下只有壁纸，主窗口底下还有整排
+  App 图标，玻璃会把图标糊成彩色斑块（真机截图实测最上方彩度 2.9、两侧 8–15，
+  亮度差约 17）。现在打开文件夹且未拖出时，主窗口雾层下会多画一块 `FogPlate`
+  —— 与顶部窗口完全同源的 `BackgroundView(animate: false)`，把网格从玻璃采样里
+  摘掉，整屏与屏幕最上方合成同一片干净灰雾；拖 App 出面板时 `plate` 立即置 nil，
+  网格恢复可见以便放回。仍是同一组五个 `glass*` 值、没有第六个设置键，
+  `LAUNCHOS_NO_FOG_PLATE=1` 是单变量回退开关。
   高亮是**纯值派生、不是 `glassEffect`** —— 主网格在光栅化页里，真玻璃会被完全扁平掉且
   实测 jank 涨到 9.75% / p95 17.98ms；`LAUNCHOS_NO_SELECTION_GLASS=1` 是单变量回退开关。
   设置页三个预览台与真机共用同一组值。
@@ -352,9 +360,19 @@ LAUNCHOS_STATE_DIR=/tmp/los-state LAUNCHOS_SYNC_DIR=/tmp/los-sync \
 所以 `B4` 断言顶部窗口**自己**的 `CABackdropLayer` 真的出现（实测 `backdrop 0→3`、
 `portal 0→9`），`B8` 关玻璃后两棵树都归零，`B2` 同时核对遮盖窗口 level 26 存在且可见。
 `B5` 用视图自己调用的 `BackdropFog.state` 证明两窗口参数相等，`B6/B7` 覆盖拖出面板与
-搜索两个状态，`B10` 关闭文件夹后顶部雾层随之停用。
+搜索两个状态，`B10` 关闭文件夹后顶部雾层随之停用，`B11–B16` 是 v1.6.2 的干净背板取证
+（见下方 K 组）。
 带 `LAUNCHOS_NO_FOG_UNIFY=1` 复跑时 `B4` 按设计断言顶部窗口 `backdrop=0`（旧行为），
 是探针本身的证伪对照。
+
+**K 组（v1.6.2）固定「干净背板」**：`K1` 两个窗口拿到同一份 `FogPlate`、
+`K2` 拖出面板时 `plate=nil` 让网格露出、`K3` 搜索与关闭态都不画背板、
+`K4` 关玻璃只去材质不影响背板、`K5` `LAUNCHOS_NO_FOG_PLATE=1` 回退被遵守、
+`K6` 编码后不出现 `plate` / `fog` 新键。`--backdrop-fog-probe` 的 `B11–B16` 重新用
+真入口打开真实文件夹：`B11` 靠 `FogPlateView.onAppear` 计数证明背板**真的渲染过**
+（`plateRenders=1`），`B12/B13` 证明两窗口同值且参数来自 `model.fogPlate`，
+`B14/B15` 覆盖拖出 / 搜索 / 关闭态，`B16` 核对回退开关。只测纯值就判绿是
+v1.4 整格 hover 假绿的教训，这里必须有视图层证据。
 
 `Views/DesignTokens.swift` 是颜色／圆角／字号／发丝线的唯一真源：主界面近黑冷调
 `#0B0D11` ＋唯一信号橙 `#FF5C35`（约 10%），设置页白底＋系统蓝是既定例外。

@@ -319,3 +319,12 @@
 - **硬规则**：顶部雾层必须放在 `MenuBarCover` 的 `ZStack` 内、与 `BackgroundView` 一起被同一个 `.mask` 裁到 `menuBarHeight`，**绝不能让雾层溢出到整屏**（会盖住主窗口）。玻璃层恒 `.allowsHitTesting(false)`；只有主窗口的 `onClose != nil` 时黑压暗层才吃点击（`.allowsHitTesting(onClose != nil)` 必须是最后一个修饰符）。`glassEffect` 仍禁止进 `PageSlot.drawingGroup()`。
 - **回退** `LAUNCHOS_NO_FOG_UNIFY=1`（`ProbeConfig.noFogUnify`）：主窗口回旧材质、顶部窗口 `visibleOnCover=false` 不叠雾，精确回到旧行为。
 - **探针不许假绿**：`--backdrop-fog-probe` 必须驱动真入口 `model.openFolderID`，分别 dump `window.contentView` 与 `menuCover.contentView` 的 layer 树；`B4` 断言顶部窗口自己出现 `CABackdropLayer`（实测 `backdrop 0→3 / portal 0→9`），`B8` 关玻璃后两树归零，回退模式下 `B4` 按设计断言 `backdrop=0`。`--appearance-probe` J1–J8 覆盖「一个滑块推三处雾层 / 状态映射 / 关玻璃 / 拖出面板 / 无面板 / 回退开关 / 不新增设置键」。**禁止只测纯函数就判绿**（v1.4 整格 hover 假绿的教训）。
+
+## 干净背板 / 去图标色斑（2026-11-10，v1.6.2）
+- **诉求澄清**：「打开文件夹后旁边的模糊处理我希望和顶部的一样」的「顶部」是**屏幕最上方菜单栏那条**，不是文件夹面板图标区上方的标题栏。已确认方向：让文件夹两侧变成与最上方一样干净均匀的灰雾，拖出图标时临时恢复网格。
+- **根因**：v1.6.1 统一的是雾的**参数**，但两个窗口 `glassEffect` 采样的**底图**不同：cover 窗口（level 26）底下只有 `BackgroundView`，主窗口底下还有整个网格。玻璃把图标采成彩色斑块（真机截图中性灰带彩度 2.9、两侧 8–15，亮度差约 17、有硬色带）。不是材质不一致，调材质 / scrim 都消不掉。
+- **唯一真源**：`Views/SearchGlass.swift` 的 `FogPlate`（纯值 `useWallpaper/wallpaper/blur/dim`，手写 `==` 用 `===` 比 NSImage identity）、`BackdropFog.plate` 与 `make(settings:state:plate:)`（`plate` 默认 nil，旧 J/B 断言不受影响）、`BackdropFogSurface.coversGrid`（只有主窗口 true）与 `FogPlateView`（唯一渲染出口，复用 `BackgroundView(..., animate:false)`）。`LauncherModel.fogPlate` 是参数唯一真源（复用 `quantizedBackdropBlur/Dim` + `wallpaper`），**禁止新增设置键或滑块**。
+- **状态机**：仅 `.folder(outsidePanel:false)` 且 `!ProbeConfig.noFogPlate` 时 `plate != nil`；拖出 / `.search` / `.none` / 回退一律 nil。`glassEnabled=false` 只去材质、背板仍在。`MenuBarCover` 也传 `model.fogPlate`（保证 `coverFog == mainFog`）但 `coversGrid=false` 绝不渲染第二份——它底下本来就干净。
+- **硬规则**：plate 必须是 `BackdropFogSurface` ZStack **最底层**、在 `glassLayer` 之下（否则玻璃仍采到图标），恒 `.allowsHitTesting(false)`；黑压暗层与 `onClose` 仍在最上层。不许改成给网格加 `.opacity(0)` 或 `if` 切结构（会重建光栅化页、破坏 paging 红线）。
+- **回退** `LAUNCHOS_NO_FOG_PLATE=1`（`ProbeConfig.noFogPlate`），精确回到 v1.6.1 的彩色斑块。
+- **探针不许假绿**：`--backdrop-fog-probe` B11–B16 必须重新打开**真入口** `model.openFolderID`；`B11` 用 `FogPlateRenderProbe.mainRenders`（`FogPlateView.onAppear`）证明视图真渲染（`plateRenders=1`），B12/B13 验两窗口同值 + 参数同源，B14/B15 验状态机，B16 验回退；`--appearance-probe` K1–K6 固化状态机与「不新增键」。FPS 必须做 `LAUNCHOS_NO_FOG_PLATE=1` 单变量 A/B（多一份全屏 `BackgroundView` 的代价要实测，不能假设）。

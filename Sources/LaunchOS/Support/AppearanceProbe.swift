@@ -457,6 +457,53 @@ enum AppearanceProbe {
             check("J8 fogAddsNoSettingsKey", false, "encode failed: \(error)")
         }
 
+        // v1.6.2 — the icon-free plate is part of the SAME fog value, not a
+        // sixth glass setting. Both windows must receive the same recipe.
+        let kPlate = FogPlate(useWallpaper: true, wallpaper: nil,
+                              blur: 30, dim: 0.42)
+        let kExpect: FogPlate? = ProbeConfig.noFogPlate ? nil : kPlate
+        let kFolder = BackdropFog.make(settings: base,
+                                       state: .folder(outsidePanel: false),
+                                       plate: kPlate)
+        let kCover = BackdropFog.make(
+            settings: base,
+            state: BackdropFog.state(openFolderID: "folder-id",
+                                     searchOpen: false, outsidePanel: false),
+            plate: kPlate)
+        check("K1 onePlateForBothWindows",
+              kFolder.plate == kExpect && kCover == kFolder,
+              "folder=[\(kFolder.readout)] cover=[\(kCover.readout)]")
+        let kOutside = BackdropFog.make(settings: base,
+                                        state: .folder(outsidePanel: true),
+                                        plate: kPlate)
+        check("K2 dragOutExposesGrid", kOutside.plate == nil, kOutside.readout)
+        let kSearch = BackdropFog.make(settings: base, state: .search,
+                                       plate: kPlate)
+        let kNone = BackdropFog.make(settings: base, state: .none,
+                                     plate: kPlate)
+        check("K3 onlyOpenFolderHidesGrid",
+              kSearch.plate == nil && kNone.plate == nil && !kNone.active,
+              "search=[\(kSearch.readout)] none=[\(kNone.readout)]")
+        let kOff = BackdropFog.make(settings: jOff,
+                                    state: .folder(outsidePanel: false),
+                                    plate: kPlate)
+        check("K4 plateIndependentOfGlassSwitch",
+              kOff.plate == kExpect && kOff.material == .none,
+              kOff.readout)
+        check("K5 plateRollbackSwitchHonoured",
+              (kFolder.plate == nil) == ProbeConfig.noFogPlate,
+              "noFogPlate=\(ProbeConfig.noFogPlate) "
+                + "plate=\(kFolder.plate != nil ? 1 : 0)")
+        do {
+            let data = try JSONEncoder().encode(base)
+            let raw = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let extra = raw.keys.filter { $0.contains("plate") || $0.contains("fog") }
+            check("K6 plateAddsNoSettingsKey", extra.isEmpty,
+                  "keys=\(extra.sorted())")
+        } catch {
+            check("K6 plateAddsNoSettingsKey", false, "encode failed: \(error)")
+        }
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")

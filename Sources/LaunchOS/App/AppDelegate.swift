@@ -438,6 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.model.settingsOpen = false
             self.model.hiddenOpen = false
             self.model.searchOpen = false
+            FogPlateRenderProbe.reset()
             guard let folder = self.model.allFolders.first else {
                 try? "PROBE backdrop fog\nFAIL no folder in state\nDONE\n"
                     .write(toFile: log, atomically: true, encoding: .utf8)
@@ -557,6 +558,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                              state: closedState)
             check("B10 closeDeactivatesCover", !closedFog.visibleOnCover,
                   closedFog.readout)
+
+            // v1.6.2 — icon-free plate. Re-open the REAL folder: a pure-value
+            // assertion would be a look-alike green, so the evidence is the
+            // plate's own onAppear counter plus the two windows' shared value.
+            self.model.openFolderID = folder.id
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let plateRenders = FogPlateRenderProbe.mainRenders
+            let plateValue = self.model.fogPlate
+            let realState = BackdropFog.state(
+                openFolderID: self.model.openFolderID,
+                searchOpen: self.model.searchOpen,
+                outsidePanel: self.model.folderDragInfo.outsidePanel)
+            let plateFog = BackdropFog.make(settings: self.model.settings,
+                                            state: realState,
+                                            plate: plateValue)
+            let coverPlateFog = BackdropFog.make(
+                settings: self.model.settings,
+                state: BackdropFog.state(openFolderID: self.model.openFolderID,
+                                         searchOpen: false,
+                                         outsidePanel: false),
+                plate: plateValue)
+            lines.append("plateRenders=\(plateRenders) "
+                + "mainLayers=\(mainOn.count) coverLayers=\(coverOn.count) "
+                + "plate=[\(plateFog.readout)]")
+
+            let expectPlate = !ProbeConfig.noFogPlate
+            check("B11 plateRenderedInRealMainWindow",
+                  expectPlate ? plateRenders > 0 : plateRenders == 0,
+                  "renders=\(plateRenders) noFogPlate=\(ProbeConfig.noFogPlate)")
+            check("B12 onePlateRecipeBothWindows",
+                  realState == .folder(outsidePanel: false)
+                    && plateFog == coverPlateFog
+                    && (expectPlate ? plateFog.plate != nil : plateFog.plate == nil),
+                  "main=[\(plateFog.readout)] cover=[\(coverPlateFog.readout)]")
+            check("B13 plateUsesSharedBackdropInputs",
+                  plateValue.useWallpaper == self.model.settings.useWallpaper
+                    && plateValue.wallpaper === self.model.wallpaper
+                    && abs(Double(plateValue.blur)
+                           - Double(self.model.quantizedBackdropBlur)) < 0.0001
+                    && abs(plateValue.dim - self.model.quantizedBackdropDim) < 0.0001,
+                  "blur=\(plateValue.blur) dim=\(plateValue.dim) "
+                    + "wallpaper=\(plateValue.wallpaper != nil ? 1 : 0)")
+            let dragOutPlate = BackdropFog.make(
+                settings: self.model.settings,
+                state: .folder(outsidePanel: true), plate: plateValue)
+            check("B14 dragOutExposesGrid", dragOutPlate.plate == nil,
+                  dragOutPlate.readout)
+            let searchPlate = BackdropFog.make(
+                settings: self.model.settings, state: .search, plate: plateValue)
+            let closedPlate = BackdropFog.make(
+                settings: self.model.settings, state: .none, plate: plateValue)
+            check("B15 searchAndClosedExposeGrid",
+                  searchPlate.plate == nil && closedPlate.plate == nil
+                    && !closedPlate.active,
+                  "search=[\(searchPlate.readout)] closed=[\(closedPlate.readout)]")
+            check("B16 plateRollbackSwitchHonoured",
+                  (plateFog.plate == nil) == ProbeConfig.noFogPlate,
+                  "noFogPlate=\(ProbeConfig.noFogPlate) "
+                    + "plate=\(plateFog.plate != nil ? 1 : 0)")
 
             lines.append(all ? "PASS" : "FAIL")
             lines.append("DONE")

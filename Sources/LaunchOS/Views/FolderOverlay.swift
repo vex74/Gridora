@@ -94,7 +94,9 @@ struct FolderOverlay: View {
                 BackdropFogSurface(
                     fog: BackdropFog.make(
                         settings: model.settings,
-                        state: .folder(outsidePanel: folderDragInfo.outsidePanel)),
+                        state: .folder(outsidePanel: folderDragInfo.outsidePanel),
+                        plate: model.fogPlate),
+                    coversGrid: true,
                     onClose: { close() })
 
                 VStack(spacing: 0) {

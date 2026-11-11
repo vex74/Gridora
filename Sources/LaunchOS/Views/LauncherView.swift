@@ -244,11 +244,16 @@ struct MenuBarCover: View {
     /// One value, shared with FolderOverlay / SearchOverlay. Without it the
     /// top strip keeps the clean wallpaper blur while the rest of the screen
     /// gets glass + scrim — the seam macOS 15 does not have.
+    /// v1.6.2: the cover receives the SAME `FogPlate` recipe (so diagnostics
+    /// can compare the two windows) but never RENDERS it. This window has no
+    /// grid underneath — its glass already samples the clean wallpaper, which
+    /// is exactly what the main window's plate reproduces.
     private var fog: BackdropFog {
         let state = BackdropFog.state(openFolderID: model.openFolderID,
                                       searchOpen: model.searchOpen,
                                       outsidePanel: folderDragInfo.outsidePanel)
-        return BackdropFog.make(settings: model.settings, state: state)
+        return BackdropFog.make(settings: model.settings, state: state,
+                               plate: model.fogPlate)
     }
 
     var body: some View {

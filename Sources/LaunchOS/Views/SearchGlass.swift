@@ -90,12 +90,35 @@ enum BackdropFogMaterial: String, Equatable {
     case glass
 }
 
+/// v1.6.2. The menu-bar cover window (level 26) has NO grid underneath: its
+/// Liquid Glass samples only the blurred wallpaper. The main window's fog sits
+/// above every app icon, so the very same glass sampled those icons too —
+/// coloured blobs beside an open folder and a hard brightness seam below the
+/// top strip. This is the pure-value recipe for ONE extra, ICON-FREE copy of
+/// that backdrop, painted under the main window's fog so both windows sample
+/// identical pixels. It reuses wallpaper / backgroundBlur / backgroundDim; it
+/// is not a sixth glass setting and adds no slider.
+struct FogPlate: Equatable {
+    let useWallpaper: Bool
+    let wallpaper: NSImage?
+    let blur: CGFloat
+    let dim: Double
+
+    static func == (lhs: FogPlate, rhs: FogPlate) -> Bool {
+        lhs.useWallpaper == rhs.useWallpaper
+            && lhs.wallpaper === rhs.wallpaper
+            && lhs.blur == rhs.blur
+            && lhs.dim == rhs.dim
+    }
+}
+
 /// Pure value. The main window and the menu-bar cover are two different
 /// NSWindows (levels 19 and 26). Before v1.6.1 the main window drew
 /// `ultraThinMaterial` + a black scrim while the cover drew only the clean
 /// blurred wallpaper, producing a visible seam across the top of the screen.
 /// Every call site now constructs the SAME fog from the SAME five `glass*`
-/// settings, so tint, material and dimming cannot drift apart.
+/// settings, so tint, material and dimming cannot drift apart. v1.6.2 adds
+/// the shared `plate` recipe (only the MAIN window renders it).
 struct BackdropFog: Equatable {
     let active: Bool
     /// Black dimming (and the click-catching layer in the main window).
@@ -103,6 +126,9 @@ struct BackdropFog: Equatable {
     /// Tint handed to the Liquid Glass fog.
     let tint: Double
     let material: BackdropFogMaterial
+    /// Non-nil only while an open folder should hide the grid. `nil` during a
+    /// drag-out, search, closed state or when the rollback switch is set.
+    let plate: FogPlate?
 
     /// State mapping shared by the menu-bar cover and the diagnostics, so a
     /// probe tests the real view's decision rather than a look-alike copy.
@@ -113,12 +139,25 @@ struct BackdropFog: Equatable {
         return .none
     }
 
-    static func make(settings: Settings, state: BackdropFogState) -> BackdropFog {
+    static func make(settings: Settings, state: BackdropFogState,
+                     plate: FogPlate? = nil) -> BackdropFog {
+        // Only the main window paints the plate (it is the one with a grid
+        // underneath). A drag OUT of the folder must expose the grid again as
+        // a drop target, so that state never carries a plate.
+        let fogPlate: FogPlate?
+        switch state {
+        case .folder(let outside) where !outside:
+            fogPlate = ProbeConfig.noFogPlate ? nil : plate
+        default:
+            fogPlate = nil
+        }
+
         let scrim: Double
         let tint: Double
         switch state {
         case .none:
-            return BackdropFog(active: false, scrim: 0, tint: 0, material: .none)
+            return BackdropFog(active: false, scrim: 0, tint: 0,
+                               material: .none, plate: nil)
         case .folder(let outside):
             // Dragging an app out of the panel thins the fog so the grid
             // underneath stays visible as a drop target.
@@ -143,7 +182,7 @@ struct BackdropFog: Equatable {
             material = .material
         }
         return BackdropFog(active: true, scrim: scrim, tint: tint,
-                           material: material)
+                           material: material, plate: fogPlate)
     }
 
     /// The cover window is the only call site that may opt out; the rollback
@@ -153,7 +192,8 @@ struct BackdropFog: Equatable {
     var readout: String {
         "active=\(active) scrim=\(String(format: "%.4f", scrim)) "
             + "tint=\(String(format: "%.4f", tint)) "
-            + "material=\(material.rawValue) cover=\(visibleOnCover)"
+            + "material=\(material.rawValue) cover=\(visibleOnCover) "
+            + "plate=\(plate != nil ? 1 : 0)"
     }
 }
 
@@ -167,12 +207,19 @@ struct BackdropFog: Equatable {
 /// the cover window is `ignoresMouseEvents` at the NSWindow level anyway.
 struct BackdropFogSurface: View {
     let fog: BackdropFog
+    /// Only the MAIN window has a grid underneath. The menu-bar cover already
+    /// samples a clean wallpaper and must never paint a second copy.
+    var coversGrid: Bool = false
     var onClose: (() -> Void)? = nil
 
     var body: some View {
         Group {
             if fog.active {
                 ZStack {
+                    if coversGrid, let plate = fog.plate {
+                        FogPlateView(plate: plate)
+                            .allowsHitTesting(false)
+                    }
                     glassLayer
                         .allowsHitTesting(false)
                     Color.black.opacity(fog.scrim)
@@ -204,6 +251,24 @@ struct BackdropFogSurface: View {
                                  in: Rectangle())
             }
         }
+    }
+}
+
+/// Exactly the backdrop `MenuBarCover` draws, with the same `animate: false`.
+/// Painting it under the main window's glass removes the grid from the glass
+/// sample without touching the paging subtree or rebuilding a single tile.
+/// `onAppear` is the view-layer evidence used by `--backdrop-fog-probe`: a
+/// pure-value assertion alone would be a look-alike green.
+private struct FogPlateView: View {
+    let plate: FogPlate
+
+    var body: some View {
+        BackgroundView(useWallpaper: plate.useWallpaper,
+                       wallpaper: plate.wallpaper,
+                       blur: plate.blur,
+                       dim: plate.dim,
+                       animate: false)
+            .onAppear { FogPlateRenderProbe.noteMain() }
     }
 }
 

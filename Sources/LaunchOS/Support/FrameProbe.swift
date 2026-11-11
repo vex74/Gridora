@@ -68,12 +68,27 @@ enum ProbeConfig {
     /// ultraThinMaterial + scrim, the cover draws nothing (visible seam).
     static let noFogUnify =
         ProcessInfo.processInfo.environment["LAUNCHOS_NO_FOG_UNIFY"] == "1"
+    /// v1.6.2: the main window paints ONE icon-free backdrop under its fog so
+    /// both NSWindows sample identical pixels. Single-variable rollback back
+    /// to the coloured app-icon blobs beside an open folder.
+    static let noFogPlate =
+        ProcessInfo.processInfo.environment["LAUNCHOS_NO_FOG_PLATE"] == "1"
 
     static func write(_ text: String) {
         let url = URL(fileURLWithPath: "/tmp/launchos-fps.log")
         try? FileManager.default.removeItem(at: url)
         try? (text + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
+}
+
+/// v1.6.2 view-layer evidence. `FogPlateView.onAppear` is the only writer, so
+/// `--backdrop-fog-probe` proves the plate rendered in the REAL main window
+/// rather than trusting a pure-value look-alike. Inert in a normal launch.
+@MainActor
+enum FogPlateRenderProbe {
+    static private(set) var mainRenders = 0
+    static func noteMain() { mainRenders += 1 }
+    static func reset() { mainRenders = 0 }
 }
 
 /// CADisplayLink retains an @objc target, so keep the selector target a plain

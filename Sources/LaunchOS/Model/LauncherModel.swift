@@ -62,6 +62,16 @@ final class LauncherModel: ObservableObject {
     var quantizedBackdropBlur: CGFloat { (settings.backgroundBlur / 5).rounded() * 5 }
     var quantizedBackdropDim: Double { (settings.backgroundDim / 0.02).rounded() * 0.02 }
 
+    /// v1.6.2: the ICON-FREE backdrop the MAIN window paints under its fog.
+    /// Exactly the inputs `MenuBarCover` passes to `BackgroundView`, so both
+    /// windows' Liquid Glass samples are pixel-identical. No new setting.
+    var fogPlate: FogPlate {
+        FogPlate(useWallpaper: settings.useWallpaper,
+                 wallpaper: wallpaper,
+                 blur: quantizedBackdropBlur,
+                 dim: quantizedBackdropDim)
+    }
+
     @Published var press: Press?
     /// Interaction-engine state only. Intentionally NOT @Published: the UI
     /// reads the split `dragInfo` / `dragMotion` objects instead, so moving
