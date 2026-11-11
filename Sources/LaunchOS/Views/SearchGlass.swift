@@ -112,6 +112,14 @@ struct FogPlate: Equatable {
     }
 }
 
+/// Which NSWindow is painting the plate. v1.6.3: both do, with the SAME
+/// recipe, so the two Liquid Glass backdrops cannot sample different pixels.
+/// The counter is view-layer evidence, not a rendering parameter.
+enum FogPlateSource {
+    case main
+    case cover
+}
+
 /// Pure value. The main window and the menu-bar cover are two different
 /// NSWindows (levels 19 and 26). Before v1.6.1 the main window drew
 /// `ultraThinMaterial` + a black scrim while the cover drew only the clean
@@ -207,17 +215,30 @@ struct BackdropFog: Equatable {
 /// the cover window is `ignoresMouseEvents` at the NSWindow level anyway.
 struct BackdropFogSurface: View {
     let fog: BackdropFog
-    /// Only the MAIN window has a grid underneath. The menu-bar cover already
-    /// samples a clean wallpaper and must never paint a second copy.
+    /// True in the main window: a grid sits underneath the fog.
     var coversGrid: Bool = false
+    /// v1.6.3: the cover paints the same plate too. Without it the cover's
+    /// glass sampled its own window (the already-dimmed main window top strip
+    /// behind it), so the top 24px came out ~23 luminance darker — the hard
+    /// band the user marked. Both windows now have an opaque, identical plate
+    /// directly under the glass.
+    var plateSource: FogPlateSource = .main
     var onClose: (() -> Void)? = nil
+
+    private var rendersPlate: Bool {
+        guard fog.plate != nil else { return false }
+        switch plateSource {
+        case .main: return coversGrid
+        case .cover: return !ProbeConfig.noCoverPlate
+        }
+    }
 
     var body: some View {
         Group {
             if fog.active {
                 ZStack {
-                    if coversGrid, let plate = fog.plate {
-                        FogPlateView(plate: plate)
+                    if rendersPlate, let plate = fog.plate {
+                        FogPlateView(plate: plate, source: plateSource)
                             .allowsHitTesting(false)
                     }
                     glassLayer
@@ -261,6 +282,7 @@ struct BackdropFogSurface: View {
 /// pure-value assertion alone would be a look-alike green.
 private struct FogPlateView: View {
     let plate: FogPlate
+    var source: FogPlateSource = .main
 
     var body: some View {
         BackgroundView(useWallpaper: plate.useWallpaper,
@@ -268,7 +290,7 @@ private struct FogPlateView: View {
                        blur: plate.blur,
                        dim: plate.dim,
                        animate: false)
-            .onAppear { FogPlateRenderProbe.noteMain() }
+            .onAppear { FogPlateRenderProbe.note(source) }
     }
 }
 

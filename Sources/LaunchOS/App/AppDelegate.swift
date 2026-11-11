@@ -618,6 +618,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   "noFogPlate=\(ProbeConfig.noFogPlate) "
                     + "plate=\(plateFog.plate != nil ? 1 : 0)")
 
+            // v1.6.3 — the menu-bar cover must paint the SAME opaque plate as
+            // the main window. v1.6.2 only passed the value, so the cover's
+            // glass sampled its own window (the already-dimmed strip behind
+            // it) and the top 24px stayed ~23 luminance darker. View-layer
+            // counters are the evidence; a pure-value copy would be a fake green.
+            let coverRenders = FogPlateRenderProbe.coverRenders
+            lines.append("plateRenders main=\(plateRenders) cover=\(coverRenders) "
+                + "noCoverPlate=\(ProbeConfig.noCoverPlate)")
+            check("B17 coverAlsoRendersPlate",
+                  (coverRenders > 0) == (expectPlate && !ProbeConfig.noCoverPlate),
+                  "cover=\(coverRenders) expectPlate=\(expectPlate) "
+                    + "noCoverPlate=\(ProbeConfig.noCoverPlate)")
+            check("B18 bothWindowsShareOnePlate",
+                  plateFog.plate == coverPlateFog.plate
+                    && (plateFog.plate != nil) == expectPlate
+                    && (expectPlate ? plateRenders > 0 : plateRenders == 0),
+                  "main=[\(plateFog.readout)] cover=[\(coverPlateFog.readout)]")
+            check("B19 coverPlateRollbackIsSingleVariable",
+                  expectPlate
+                    ? (coverRenders > 0) == !ProbeConfig.noCoverPlate
+                    : (coverRenders == 0 && plateRenders == 0),
+                  "main=\(plateRenders) cover=\(coverRenders) "
+                    + "noFogPlate=\(ProbeConfig.noFogPlate) "
+                    + "noCoverPlate=\(ProbeConfig.noCoverPlate)")
+
             lines.append(all ? "PASS" : "FAIL")
             lines.append("DONE")
             try? (lines.joined(separator: "\n") + "\n")

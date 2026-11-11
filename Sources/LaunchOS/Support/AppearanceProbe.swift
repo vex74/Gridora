@@ -504,6 +504,22 @@ enum AppearanceProbe {
             check("K6 plateAddsNoSettingsKey", false, "encode failed: \(error)")
         }
 
+        // v1.6.3 — painting the plate in the cover is a RENDERING decision.
+        // It must not mutate the shared fog value or add a sixth setting.
+        check("K7 coverPlateKeepsFogPureValue",
+              kFolder.plate == kExpect && kCover == kFolder,
+              "noCoverPlate=\(ProbeConfig.noCoverPlate) "
+                + "folder=[\(kFolder.readout)] cover=[\(kCover.readout)]")
+        do {
+            let data = try JSONEncoder().encode(base)
+            let raw = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let extra = raw.keys.filter { $0.contains("cover") || $0.contains("source") }
+            check("K8 coverPlateAddsNoSettingsKey", extra.isEmpty,
+                  "keys=\(extra.sorted())")
+        } catch {
+            check("K8 coverPlateAddsNoSettingsKey", false, "encode failed: \(error)")
+        }
+
         lines.append(all ? "PASS" : "FAIL")
         lines.append("DONE")
         try? (lines.joined(separator: "\n") + "\n")

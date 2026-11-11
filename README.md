@@ -88,8 +88,16 @@ LAUNCHOS_FORCE_INSTALL=1 ./Scripts/install.sh # 即使版本相同也强制替�
   亮度差约 17）。现在打开文件夹且未拖出时，主窗口雾层下会多画一块 `FogPlate`
   —— 与顶部窗口完全同源的 `BackgroundView(animate: false)`，把网格从玻璃采样里
   摘掉，整屏与屏幕最上方合成同一片干净灰雾；拖 App 出面板时 `plate` 立即置 nil，
-  网格恢复可见以便放回。仍是同一组五个 `glass*` 值、没有第六个设置键，
+  网格恢复可见以便放回。  仍是同一组五个 `glass*` 值、没有第六个设置键，
   `LAUNCHOS_NO_FOG_PLATE=1` 是单变量回退开关。
+  **v1.6.3：消掉屏幕最上方那条深色带**。v1.6.2 只让主窗口画 `FogPlate`，
+  菜单栏窗口的玻璃仍采到自己窗口（包含其后已被压暗的主窗口顶部），二次压暗
+  —— 真机截图顶部 0–24px 亮度 71.4、下方 94–98，差 23 且一刀切。现在
+  `MenuBarCover` 也用 `BackdropFogSurface(plateSource: .cover)` 画**同一份不透明
+  plate**，两窗口层序统一为 `plate → glass → scrim`，玻璃采样目标一致；layer 树实测
+  `coverLayers 100→125`、`plateRenders main=1 cover=1`。`coversGrid` 仍只对主窗口为
+  true（只有它有网格）。`LAUNCHOS_NO_COVER_PLATE=1` 精确回到 v1.6.2 的硬色带，
+  与 `LAUNCHOS_NO_FOG_PLATE=1` 相互独立，仍是五个 `glass*` 键。
   高亮是**纯值派生、不是 `glassEffect`** —— 主网格在光栅化页里，真玻璃会被完全扁平掉且
   实测 jank 涨到 9.75% / p95 17.98ms；`LAUNCHOS_NO_SELECTION_GLASS=1` 是单变量回退开关。
   设置页三个预览台与真机共用同一组值。
@@ -360,8 +368,8 @@ LAUNCHOS_STATE_DIR=/tmp/los-state LAUNCHOS_SYNC_DIR=/tmp/los-sync \
 所以 `B4` 断言顶部窗口**自己**的 `CABackdropLayer` 真的出现（实测 `backdrop 0→3`、
 `portal 0→9`），`B8` 关玻璃后两棵树都归零，`B2` 同时核对遮盖窗口 level 26 存在且可见。
 `B5` 用视图自己调用的 `BackdropFog.state` 证明两窗口参数相等，`B6/B7` 覆盖拖出面板与
-搜索两个状态，`B10` 关闭文件夹后顶部雾层随之停用，`B11–B16` 是 v1.6.2 的干净背板取证
-（见下方 K 组）。
+搜索两个状态，`B10` 关闭文件夹后顶部雾层随之停用，`B11–B16` 是 v1.6.2 的干净背板取证、
+`B17–B19` 是 v1.6.3 的两窗口同构取证（见下方 K 组）。
 带 `LAUNCHOS_NO_FOG_UNIFY=1` 复跑时 `B4` 按设计断言顶部窗口 `backdrop=0`（旧行为），
 是探针本身的证伪对照。
 
@@ -373,6 +381,13 @@ LAUNCHOS_STATE_DIR=/tmp/los-state LAUNCHOS_SYNC_DIR=/tmp/los-sync \
 （`plateRenders=1`），`B12/B13` 证明两窗口同值且参数来自 `model.fogPlate`，
 `B14/B15` 覆盖拖出 / 搜索 / 关闭态，`B16` 核对回退开关。只测纯值就判绿是
 v1.4 整格 hover 假绿的教训，这里必须有视图层证据。
+
+**B17–B19 / K7–K8（v1.6.3）固定「两窗口同构」**：`FogPlateView.onAppear` 按窗口分别计数，
+正常 `plateRenders main=1 cover=1`；`LAUNCHOS_NO_COVER_PLATE=1` 时 cover=0 而 main=1
+（layer 树 `coverLayers 125→100`，精确回到 v1.6.2）；`LAUNCHOS_NO_FOG_PLATE=1` 时两者
+都为 0（回到 v1.6.1）。`K7` 断言 cover 渲染不改变 `BackdropFog` 纯值，`K8` 断言编码后
+不出现 `cover` / `source` 新键。打开文件夹时多一份全屏 `BackgroundView` 的代价，
+必须用 `LAUNCHOS_NO_COVER_PLATE=1` 做单变量 FPS A/B，不能假设。
 
 `Views/DesignTokens.swift` 是颜色／圆角／字号／发丝线的唯一真源：主界面近黑冷调
 `#0B0D11` ＋唯一信号橙 `#FF5C35`（约 10%），设置页白底＋系统蓝是既定例外。

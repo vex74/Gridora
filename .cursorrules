@@ -324,7 +324,14 @@
 - **诉求澄清**：「打开文件夹后旁边的模糊处理我希望和顶部的一样」的「顶部」是**屏幕最上方菜单栏那条**，不是文件夹面板图标区上方的标题栏。已确认方向：让文件夹两侧变成与最上方一样干净均匀的灰雾，拖出图标时临时恢复网格。
 - **根因**：v1.6.1 统一的是雾的**参数**，但两个窗口 `glassEffect` 采样的**底图**不同：cover 窗口（level 26）底下只有 `BackgroundView`，主窗口底下还有整个网格。玻璃把图标采成彩色斑块（真机截图中性灰带彩度 2.9、两侧 8–15，亮度差约 17、有硬色带）。不是材质不一致，调材质 / scrim 都消不掉。
 - **唯一真源**：`Views/SearchGlass.swift` 的 `FogPlate`（纯值 `useWallpaper/wallpaper/blur/dim`，手写 `==` 用 `===` 比 NSImage identity）、`BackdropFog.plate` 与 `make(settings:state:plate:)`（`plate` 默认 nil，旧 J/B 断言不受影响）、`BackdropFogSurface.coversGrid`（只有主窗口 true）与 `FogPlateView`（唯一渲染出口，复用 `BackgroundView(..., animate:false)`）。`LauncherModel.fogPlate` 是参数唯一真源（复用 `quantizedBackdropBlur/Dim` + `wallpaper`），**禁止新增设置键或滑块**。
-- **状态机**：仅 `.folder(outsidePanel:false)` 且 `!ProbeConfig.noFogPlate` 时 `plate != nil`；拖出 / `.search` / `.none` / 回退一律 nil。`glassEnabled=false` 只去材质、背板仍在。`MenuBarCover` 也传 `model.fogPlate`（保证 `coverFog == mainFog`）但 `coversGrid=false` 绝不渲染第二份——它底下本来就干净。
+- **状态机**：仅 `.folder(outsidePanel:false)` 且 `!ProbeConfig.noFogPlate` 时 `plate != nil`；拖出 / `.search` / `.none` / 回退一律 nil。`glassEnabled=false` 只去材质、背板仍在。`MenuBarCover` 也传 `model.fogPlate`（保证 `coverFog == mainFog`）、`coversGrid=false` 恒成立（它没有网格）。**v1.6.2 的「cover 绝不渲染第二份」已被 v1.6.3 证伪并撤销，见下一节**。
 - **硬规则**：plate 必须是 `BackdropFogSurface` ZStack **最底层**、在 `glassLayer` 之下（否则玻璃仍采到图标），恒 `.allowsHitTesting(false)`；黑压暗层与 `onClose` 仍在最上层。不许改成给网格加 `.opacity(0)` 或 `if` 切结构（会重建光栅化页、破坏 paging 红线）。
 - **回退** `LAUNCHOS_NO_FOG_PLATE=1`（`ProbeConfig.noFogPlate`），精确回到 v1.6.1 的彩色斑块。
 - **探针不许假绿**：`--backdrop-fog-probe` B11–B16 必须重新打开**真入口** `model.openFolderID`；`B11` 用 `FogPlateRenderProbe.mainRenders`（`FogPlateView.onAppear`）证明视图真渲染（`plateRenders=1`），B12/B13 验两窗口同值 + 参数同源，B14/B15 验状态机，B16 验回退；`--appearance-probe` K1–K6 固化状态机与「不新增键」。FPS 必须做 `LAUNCHOS_NO_FOG_PLATE=1` 单变量 A/B（多一份全屏 `BackgroundView` 的代价要实测，不能假设）。
+
+## 顶部硬色带 / 两窗口同构（2026-11-11，v1.6.3）
+- **诉求**：用户用红圈标注屏幕最上方 0–24px 那条深灰带。截图量化：顶部亮度 71.4、下方 94–98，差 23 且边界一刀切；两侧彩度 7–8（v1.6.2 已生效，**不是**图标斑块复发）。右上角蓝色细线圈不是 Gridora 绘制（全项目无蓝色圆环控件，v1.6.1 截图同一位置已有），不要为它改代码。
+- **根因**：v1.6.2 只让主窗口画 `FogPlate`；cover 窗口（level 26）的 `glassEffect` 采到自己窗口（包含其后已被压暗的主窗口顶部），二次压暗 → 顶部比下方暗 23。统一参数、统一 `plate` 纯值都不够，**必须让两窗口玻璃下面的不透明底板也同构**。
+- **唯一真源**：`FogPlateSource`（main / cover）+ `BackdropFogSurface.plateSource` + `rendersPlate`（main 看 `coversGrid`，cover 看 `!ProbeConfig.noCoverPlate`）+ `FogPlateView(source:)`（仍是唯一渲染出口，按 source 分别记 `FogPlateRenderProbe.mainRenders/coverRenders`）。两窗口层序统一为 `plate → glass → scrim`；`MenuBarCover` 传 `.cover`，`coversGrid` 仍 false。**禁止**改成给网格 `.opacity(0)` / `if` 切结构，也禁止再写第二套雾材质或第六个设置键。
+- **回退** `LAUNCHOS_NO_COVER_PLATE=1`（`ProbeConfig.noCoverPlate`）：`coverRenders=0`、`coverLayers 125→100`，精确回到 v1.6.2 的硬色带；与 `LAUNCHOS_NO_FOG_PLATE=1`（回 v1.6.1 彩色斑块）相互独立。
+- **探针不许假绿**：B17–B19 必须用视图层 `onAppear` 计数（正常 main=1 cover=1 / 只关 cover plate 时 cover=0 且 main=1 / 只关 plate 时两者 0），K7/K8 固化「不改变 `BackdropFog` 纯值 / 编码不出现 `cover` `source` 新键」。FPS 必须做 `LAUNCHOS_NO_COVER_PLATE=1` 单变量 A/B（cover 多一份全屏 `BackgroundView` 的代价要实测）。
